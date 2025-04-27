@@ -25,7 +25,8 @@ pub enum ForthOp {
     Print,      // .
     PrintStack, // .s
     // Other
-    Word(String), // For words not yet defined or handled
+    Word(String),                 // For words not yet defined or handled
+    Define(String, Vec<ForthOp>), // Added: Name and body of the definition
 }
 
 impl fmt::Display for ForthOp {
@@ -50,50 +51,128 @@ impl fmt::Display for ForthOp {
             ForthOp::Print => write!(f, "Print"),
             ForthOp::PrintStack => write!(f, "PrintStack"),
             ForthOp::Word(s) => write!(f, "Word({})", s),
+            ForthOp::Define(name, ops) => write!(f, "Define({}, {:?})", name, ops), // Added
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
-    UnknownWord(String),
-    // Add other potential parse errors here if needed
+    // Removed UnknownWord as it's handled by ForthOp::Word
+    UnexpectedToken(Token),       // E.g., Semicolon without Colon
+    ExpectedWordName,             // E.g., Colon not followed by a Word
+    UnterminatedDefinition,       // E.g., Reached end of input inside definition
+    NestedDefinitionNotSupported, // E.g., Colon inside a definition
+}
+
+// Helper function to parse a single token into a ForthOp (used in interpret and compile modes)
+fn parse_token_to_op(token: Token) -> Option<ForthOp> {
+    match token {
+        Token::Integer(i) => Some(ForthOp::Push(i)),
+        Token::Word(s) => {
+            // Recognize built-in words and operators case-insensitively
+            match s.to_lowercase().as_str() {
+                "+" => Some(ForthOp::Add),
+                "-" => Some(ForthOp::Subtract),
+                "*" => Some(ForthOp::Multiply),
+                "/" => Some(ForthOp::Divide),
+                "." => Some(ForthOp::Print),
+                ".s" => Some(ForthOp::PrintStack),
+                "dup" => Some(ForthOp::Dup),
+                "drop" => Some(ForthOp::Drop),
+                "swap" => Some(ForthOp::Swap),
+                "over" => Some(ForthOp::Over),
+                "rot" => Some(ForthOp::Rot),
+                "?dup" => Some(ForthOp::QDup),
+                "2dup" => Some(ForthOp::TwoDup),
+                "2drop" => Some(ForthOp::TwoDrop),
+                "2swap" => Some(ForthOp::TwoSwap),
+                "2over" => Some(ForthOp::TwoOver),
+                "-rot" => Some(ForthOp::MinusRot),
+                _ => Some(ForthOp::Word(s)),
+            }
+        }
+        // Colon and Semicolon handled in parse(), skip other tokens
+        _ => None,
+    }
 }
 
 pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
     let mut ops = Vec::new();
-    for token in tokens {
-        match token {
-            Token::Integer(i) => ops.push(ForthOp::Push(i)),
-            Token::Word(s) => {
-                match s.to_lowercase().as_str() {
-                    // Match case-insensitively
-                    // Arithmetic
-                    "+" => ops.push(ForthOp::Add),
-                    "-" => ops.push(ForthOp::Subtract),
-                    "*" => ops.push(ForthOp::Multiply),
-                    "/" => ops.push(ForthOp::Divide),
-                    // Stack
-                    "dup" => ops.push(ForthOp::Dup),
-                    "drop" => ops.push(ForthOp::Drop),
-                    "swap" => ops.push(ForthOp::Swap),
-                    "over" => ops.push(ForthOp::Over),
-                    "rot" => ops.push(ForthOp::Rot),
-                    "?dup" => ops.push(ForthOp::QDup),
-                    "2dup" => ops.push(ForthOp::TwoDup),
-                    "2drop" => ops.push(ForthOp::TwoDrop),
-                    "2swap" => ops.push(ForthOp::TwoSwap),
-                    "2over" => ops.push(ForthOp::TwoOver),
-                    "-rot" => ops.push(ForthOp::MinusRot),
-                    // Output
-                    "." => ops.push(ForthOp::Print),
-                    ".s" => ops.push(ForthOp::PrintStack),
-                    // Unknown words
-                    _ => ops.push(ForthOp::Word(s)),
+    let mut token_iter = tokens.into_iter().peekable();
+    let mut compiling = false; // Are we inside a : ... ; definition?
+    let mut current_def_name: Option<String> = None;
+    let mut current_def_body: Vec<ForthOp> = Vec::new();
+
+    while let Some(token) = token_iter.next() {
+        // Skip whitespace and comments
+        if matches!(
+            token,
+            Token::Whitespace | Token::Comment | Token::LineComment
+        ) {
+            continue;
+        }
+
+        if compiling {
+            match token {
+                Token::Semicolon => {
+                    // End definition
+                    let name = current_def_name.take().unwrap(); // Should always have a name here
+                    ops.push(ForthOp::Define(name, current_def_body.clone()));
+                    current_def_body.clear();
+                    compiling = false;
+                }
+                Token::Colon => {
+                    // Nested definitions not allowed (for now)
+                    return Err(ParseError::NestedDefinitionNotSupported);
+                }
+                _ => {
+                    // Compile token into the body
+                    if let Some(op) = parse_token_to_op(token.clone()) {
+                        current_def_body.push(op);
+                    } else {
+                        // This case shouldn't happen if parse_token_to_op is correct
+                        return Err(ParseError::UnexpectedToken(token));
+                    }
+                }
+            }
+        } else {
+            // Interpret mode
+            match token {
+                Token::Colon => {
+                    // Start definition
+                    // Expect the next token to be the word name
+                    match token_iter.next() {
+                        Some(Token::Word(name)) => {
+                            compiling = true;
+                            current_def_name = Some(name.to_uppercase()); // Store name (e.g., uppercase convention)
+                        }
+                        Some(_other_token) => return Err(ParseError::ExpectedWordName), // Colon must be followed by a word
+                        None => return Err(ParseError::ExpectedWordName), // Reached end after colon
+                    }
+                }
+                Token::Semicolon => {
+                    // Semicolon outside definition is an error
+                    return Err(ParseError::UnexpectedToken(Token::Semicolon));
+                }
+                _ => {
+                    // Interpret token directly
+                    if let Some(op) = parse_token_to_op(token.clone()) {
+                        ops.push(op);
+                    } else {
+                        // This case shouldn't happen if parse_token_to_op is correct
+                        return Err(ParseError::UnexpectedToken(token));
+                    }
                 }
             }
         }
     }
+
+    // Check if we ended mid-definition
+    if compiling {
+        return Err(ParseError::UnterminatedDefinition);
+    }
+
     Ok(ops)
 }
 
@@ -102,6 +181,7 @@ mod tests {
     use super::*;
     use crate::token::Token;
 
+    // ... existing test_parse_basic_ops ...
     #[test]
     fn test_parse_basic_ops() {
         let tokens = vec![
@@ -119,6 +199,7 @@ mod tests {
         assert_eq!(parse(tokens), expected_ops);
     }
 
+    // ... existing test_parse_stack_ops ...
     #[test]
     fn test_parse_stack_ops() {
         let tokens = vec![
@@ -150,6 +231,7 @@ mod tests {
         assert_eq!(parse(tokens), expected_ops);
     }
 
+    // ... existing test_parse_all_known_words ...
     #[test]
     fn test_parse_all_known_words() {
         let tokens = vec![
@@ -187,10 +269,95 @@ mod tests {
         assert_eq!(parse(tokens), expected_ops);
     }
 
+    // ... existing test_parse_empty ...
     #[test]
     fn test_parse_empty() {
         let tokens = vec![];
         let expected_ops = Ok(vec![]);
         assert_eq!(parse(tokens), expected_ops);
+    }
+
+    #[test]
+    fn test_parse_definition() {
+        let tokens = vec![
+            Token::Colon,
+            Token::Word("DOUBLE".to_string()),
+            Token::Integer(2),
+            Token::Word("*".to_string()),
+            Token::Semicolon,
+        ];
+        let expected_ops = Ok(vec![ForthOp::Define(
+            "DOUBLE".to_string(),
+            vec![ForthOp::Push(2), ForthOp::Multiply],
+        )]);
+        assert_eq!(parse(tokens), expected_ops);
+    }
+
+    #[test]
+    fn test_parse_mixed_definition_and_execution() {
+        let tokens = vec![
+            Token::Integer(10),
+            Token::Colon,
+            Token::Word("SQUARE".to_string()),
+            Token::Word("DUP".to_string()),
+            Token::Word("*".to_string()),
+            Token::Semicolon,
+            Token::Word("SQUARE".to_string()), // This will be ForthOp::Word("SQUARE")
+            Token::Word(".".to_string()),
+        ];
+        let expected_ops = Ok(vec![
+            ForthOp::Push(10),
+            ForthOp::Define("SQUARE".to_string(), vec![ForthOp::Dup, ForthOp::Multiply]),
+            ForthOp::Word("SQUARE".to_string()),
+            ForthOp::Print,
+        ]);
+        assert_eq!(parse(tokens), expected_ops);
+    }
+
+    #[test]
+    fn test_parse_error_unterminated_definition() {
+        let tokens = vec![
+            Token::Colon,
+            Token::Word("TEST".to_string()),
+            Token::Integer(1),
+        ];
+        assert_eq!(parse(tokens), Err(ParseError::UnterminatedDefinition));
+    }
+
+    #[test]
+    fn test_parse_error_unexpected_semicolon() {
+        let tokens = vec![Token::Integer(1), Token::Semicolon];
+        assert_eq!(
+            parse(tokens),
+            Err(ParseError::UnexpectedToken(Token::Semicolon))
+        );
+    }
+
+    #[test]
+    fn test_parse_error_colon_no_name() {
+        let tokens = vec![
+            Token::Colon,
+            Token::Integer(5), // Not a word name
+        ];
+        assert_eq!(parse(tokens), Err(ParseError::ExpectedWordName));
+    }
+
+    #[test]
+    fn test_parse_error_colon_eof() {
+        let tokens = vec![Token::Colon];
+        assert_eq!(parse(tokens), Err(ParseError::ExpectedWordName));
+    }
+
+    #[test]
+    fn test_parse_error_nested_definition() {
+        let tokens = vec![
+            Token::Colon,
+            Token::Word("OUTER".to_string()),
+            Token::Colon, // Nested colon
+            Token::Word("INNER".to_string()),
+            Token::Semicolon,
+            Token::Semicolon,
+        ];
+        assert_eq!(parse(tokens), Err(ParseError::NestedDefinitionNotSupported));
     }
 }

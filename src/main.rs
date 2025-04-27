@@ -1,5 +1,6 @@
+use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
-use rustyline::{DefaultEditor, Result};
+use std::collections::HashMap; // Import HashMap
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::PathBuf;
@@ -9,8 +10,11 @@ mod parser;
 mod stack_ops; // Declare the stack_ops module
 mod token;
 
+use crate::eval::eval; // Import eval function
+use crate::parser::ForthOp; // Import ForthOp
+use crate::parser::parse;
 use logos::Logos;
-use token::Token;
+use token::Token; // Import parse function
 
 fn get_history_path() -> Option<PathBuf> {
     home::home_dir().map(|mut path| {
@@ -20,11 +24,13 @@ fn get_history_path() -> Option<PathBuf> {
     })
 }
 
-fn main() -> Result<()> {
+// Use std::result::Result to avoid conflict with rustyline::Result
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("welcome to rforth");
 
     let history_path = get_history_path();
     let mut stack: Vec<i64> = Vec::new(); // The Forth stack
+    let mut dictionary: HashMap<String, Vec<ForthOp>> = HashMap::new(); // Create the dictionary
 
     if atty::is(atty::Stream::Stdin) {
         let mut rl = DefaultEditor::new()?;
@@ -57,10 +63,10 @@ fn main() -> Result<()> {
                         Token::lexer(&line).filter_map(|res| res.ok()).collect();
                     if !tokens.is_empty() {
                         // Avoid parsing if only whitespace/comments
-                        match parser::parse(tokens) {
+                        match parse(tokens) {
                             Ok(ops) => {
                                 // println!("Parsed: {:?}", ops); // Debug print
-                                match eval::eval(&ops, &mut stack) {
+                                match eval(&ops, &mut stack, &mut dictionary) {
                                     Ok(()) => { /* Successfully evaluated */ }
                                     Err(e) => {
                                         eprintln!("Error: {}", e);
@@ -106,10 +112,10 @@ fn main() -> Result<()> {
                     // Collect only valid tokens, skipping errors
                     let tokens: Vec<Token> = Token::lexer(&l).filter_map(|res| res.ok()).collect();
                     if !tokens.is_empty() {
-                        match parser::parse(tokens) {
+                        match parse(tokens) {
                             Ok(ops) => {
                                 // println!("Parsed: {:?}", ops); // Debug print
-                                match eval::eval(&ops, &mut stack) {
+                                match eval(&ops, &mut stack, &mut dictionary) {
                                     Ok(()) => { /* Successfully evaluated */ }
                                     Err(e) => {
                                         eprintln!("Error: {}", e);

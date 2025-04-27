@@ -4,6 +4,14 @@ use std::fs;
 use std::io::{self, BufRead};
 use std::path::PathBuf;
 
+mod eval;
+mod parser;
+mod stack_ops; // Declare the stack_ops module
+mod token;
+
+use logos::Logos;
+use token::Token;
+
 fn get_history_path() -> Option<PathBuf> {
     home::home_dir().map(|mut path| {
         path.push(".rforth");
@@ -16,9 +24,9 @@ fn main() -> Result<()> {
     println!("welcome to rforth");
 
     let history_path = get_history_path();
+    let mut stack: Vec<i64> = Vec::new(); // The Forth stack
 
     if atty::is(atty::Stream::Stdin) {
-        // Interactive terminal session
         let mut rl = DefaultEditor::new()?;
 
         if let Some(ref path) = history_path {
@@ -38,14 +46,36 @@ fn main() -> Result<()> {
             match readline {
                 Ok(line) => {
                     if !line.trim().is_empty() {
-                        // Don't save empty lines
-                        // Use _path to silence the unused variable warning
                         if let Some(ref _path) = history_path {
                             rl.add_history_entry(line.as_str())?;
                         }
                     }
-                    println!("Echo: {}", line);
-                    // TODO: Add eval step here
+
+                    // --- Lex, Parse, Eval ---
+                    // Collect only valid tokens, skipping errors
+                    let tokens: Vec<Token> =
+                        Token::lexer(&line).filter_map(|res| res.ok()).collect();
+                    if !tokens.is_empty() {
+                        // Avoid parsing if only whitespace/comments
+                        match parser::parse(tokens) {
+                            Ok(ops) => {
+                                // println!("Parsed: {:?}", ops); // Debug print
+                                match eval::eval(&ops, &mut stack) {
+                                    Ok(()) => { /* Successfully evaluated */ }
+                                    Err(e) => {
+                                        eprintln!("Error: {}", e);
+                                        // Optionally clear stack on error, depending on desired Forth behavior
+                                        // stack.clear();
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                // Parser errors are less common with current setup but might occur later
+                                eprintln!("Parse Error: {:?}", e);
+                            }
+                        }
+                    }
+                    // --- End Lex, Parse, Eval ---
                 }
                 Err(ReadlineError::Interrupted) => {
                     println!("CTRL-C");
@@ -72,8 +102,28 @@ fn main() -> Result<()> {
         for line in stdin.lock().lines() {
             match line {
                 Ok(l) => {
-                    println!("Echo: {}", l);
-                    // TODO: Add eval step here
+                    // --- Lex, Parse, Eval ---
+                    // Collect only valid tokens, skipping errors
+                    let tokens: Vec<Token> = Token::lexer(&l).filter_map(|res| res.ok()).collect();
+                    if !tokens.is_empty() {
+                        match parser::parse(tokens) {
+                            Ok(ops) => {
+                                // println!("Parsed: {:?}", ops); // Debug print
+                                match eval::eval(&ops, &mut stack) {
+                                    Ok(()) => { /* Successfully evaluated */ }
+                                    Err(e) => {
+                                        eprintln!("Error: {}", e);
+                                        // Optionally clear stack on error
+                                        // stack.clear();
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Parse Error: {:?}", e);
+                            }
+                        }
+                    }
+                    // --- End Lex, Parse, Eval ---
                 }
                 Err(e) => {
                     eprintln!("Error reading stdin: {}", e);

@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 atty = "0.2.14"
 home = "0.5.11"
+logos = "0.15.0"
 rustyline = "15.0.0"

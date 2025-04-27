@@ -27,6 +27,8 @@ pub enum ForthOp {
     // Other
     Word(String),                 // For words not yet defined or handled
     Define(String, Vec<ForthOp>), // Added: Name and body of the definition
+    // Conditional: IF-ELSE-THEN branches
+    IfElse(Vec<ForthOp>, Vec<ForthOp>),
 }
 
 impl fmt::Display for ForthOp {
@@ -52,6 +54,9 @@ impl fmt::Display for ForthOp {
             ForthOp::PrintStack => write!(f, "PrintStack"),
             ForthOp::Word(s) => write!(f, "Word({})", s),
             ForthOp::Define(name, ops) => write!(f, "Define({}, {:?})", name, ops), // Added
+            ForthOp::IfElse(then_ops, else_ops) => {
+                write!(f, "IfElse({:?}, {:?})", then_ops, else_ops)
+            }
         }
     }
 }
@@ -63,6 +68,7 @@ pub enum ParseError {
     ExpectedWordName,             // E.g., Colon not followed by a Word
     UnterminatedDefinition,       // E.g., Reached end of input inside definition
     NestedDefinitionNotSupported, // E.g., Colon inside a definition
+    UnterminatedConditional,
 }
 
 // Helper function to parse a single token into a ForthOp (used in interpret and compile modes)
@@ -156,11 +162,54 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
                     return Err(ParseError::UnexpectedToken(Token::Semicolon));
                 }
                 _ => {
+                    // Check for IF...ELSE...THEN control structure
+                    if let Token::Word(s) = &token {
+                        let sl = s.to_lowercase();
+                        if sl == "if" {
+                            // Collect then- and else- tokens
+                            let mut then_toks = Vec::new();
+                            let mut else_toks = Vec::new();
+                            let mut depth = 1;
+                            let mut in_else = false;
+                            while let Some(next_tok) = token_iter.next() {
+                                if let Token::Word(w) = &next_tok {
+                                    let wl = w.to_lowercase();
+                                    if wl == "if" {
+                                        depth += 1;
+                                    } else if wl == "else" && depth == 1 {
+                                        in_else = true;
+                                        continue;
+                                    } else if wl == "then" {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if in_else {
+                                    else_toks.push(next_tok.clone());
+                                } else {
+                                    then_toks.push(next_tok.clone());
+                                }
+                            }
+                            if depth != 0 {
+                                return Err(ParseError::UnterminatedConditional);
+                            }
+                            // Parse branches
+                            let then_ops = parse(then_toks)?;
+                            let else_ops = if in_else {
+                                parse(else_toks)?
+                            } else {
+                                Vec::new()
+                            };
+                            ops.push(ForthOp::IfElse(then_ops, else_ops));
+                            continue;
+                        }
+                    }
                     // Interpret token directly
                     if let Some(op) = parse_token_to_op(token.clone()) {
                         ops.push(op);
                     } else {
-                        // This case shouldn't happen if parse_token_to_op is correct
                         return Err(ParseError::UnexpectedToken(token));
                     }
                 }
@@ -359,5 +408,53 @@ mod tests {
             Token::Semicolon,
         ];
         assert_eq!(parse(tokens), Err(ParseError::NestedDefinitionNotSupported));
+    }
+
+    #[test]
+    fn test_parse_if_then() {
+        let tokens = vec![
+            Token::Integer(1),
+            Token::Word("if".to_string()),
+            Token::Word("dup".to_string()),
+            Token::Word("then".to_string()),
+        ];
+        let expected = Ok(vec![
+            ForthOp::Push(1),
+            ForthOp::IfElse(vec![ForthOp::Dup], vec![]),
+        ]);
+        assert_eq!(parse(tokens), expected);
+    }
+
+    #[test]
+    fn test_parse_if_else_then() {
+        let tokens = vec![
+            Token::Integer(0),
+            Token::Word("if".to_string()),
+            Token::Word("dup".to_string()),
+            Token::Word("else".to_string()),
+            Token::Word("swap".to_string()),
+            Token::Word("then".to_string()),
+        ];
+        let expected = Ok(vec![
+            ForthOp::Push(0),
+            ForthOp::IfElse(vec![ForthOp::Dup], vec![ForthOp::Swap]),
+        ]);
+        assert_eq!(parse(tokens), expected);
+    }
+
+    #[test]
+    fn test_parse_nested_if() {
+        let tokens = vec![
+            Token::Word("if".to_string()),
+            Token::Word("if".to_string()),
+            Token::Word("dup".to_string()),
+            Token::Word("then".to_string()),
+            Token::Word("then".to_string()),
+        ];
+        let expected = Ok(vec![ForthOp::IfElse(
+            vec![ForthOp::IfElse(vec![ForthOp::Dup], vec![])],
+            vec![],
+        )]);
+        assert_eq!(parse(tokens), expected);
     }
 }

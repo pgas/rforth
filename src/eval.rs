@@ -97,6 +97,16 @@ pub fn eval(
                     return Err(EvalError::UnknownWord(s.clone()));
                 }
             }
+            // Conditional execution
+            ForthOp::IfElse(then_ops, else_ops) => {
+                // Pop flag from stack
+                let flag = stack.pop().ok_or(EvalError::StackUnderflow)?;
+                if flag != 0 {
+                    eval(then_ops, stack, dictionary)?;
+                } else {
+                    eval(else_ops, stack, dictionary)?;
+                }
+            }
         }
     }
     Ok(())
@@ -108,6 +118,7 @@ mod tests {
     use crate::parser::ForthOp;
     use crate::parser::parse;
     use crate::token::Token;
+    use logos::Logos; // Bring Logos trait into scope for Token::lexer
     use std::collections::HashMap; // Import HashMap for tests
 
     // Helper to create a default dictionary for tests
@@ -402,5 +413,26 @@ mod tests {
         // Unknown word should cause panic in run_forth
         let result = std::panic::catch_unwind(|| run_forth("foo"));
         assert!(result.is_err());
+    }
+
+    // Functional tests for conditional execution
+    #[test]
+    fn test_run_if_then_true() {
+        assert_eq!(run_forth("1 if 2 then"), vec![2]);
+    }
+
+    #[test]
+    fn test_run_if_then_false() {
+        assert_eq!(run_forth("0 if 2 then"), Vec::<i64>::new());
+    }
+
+    #[test]
+    fn test_run_if_else_then_true() {
+        assert_eq!(run_forth("1 if 2 else 3 then"), vec![2]);
+    }
+
+    #[test]
+    fn test_run_if_else_then_false() {
+        assert_eq!(run_forth("0 if 2 else 3 then"), vec![3]);
     }
 }

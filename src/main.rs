@@ -72,7 +72,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => {
                             // If still inside definition or conditional, wait for more lines
-                            if matches!(e, crate::parser::ParseError::UnterminatedDefinition | crate::parser::ParseError::UnterminatedConditional) {
+                            if matches!(
+                                e,
+                                crate::parser::ParseError::UnterminatedDefinition
+                                    | crate::parser::ParseError::UnterminatedConditional
+                            ) {
                                 continue;
                             }
                             // Otherwise report and clear buffer
@@ -122,7 +126,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         Err(e) => {
-                            if matches!(e, crate::parser::ParseError::UnterminatedDefinition | crate::parser::ParseError::UnterminatedConditional) {
+                            if matches!(
+                                e,
+                                crate::parser::ParseError::UnterminatedDefinition
+                                    | crate::parser::ParseError::UnterminatedConditional
+                            ) {
                                 continue;
                             }
                             eprintln!("Parse Error: {:?}", e);

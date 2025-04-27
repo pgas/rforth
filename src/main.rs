@@ -48,41 +48,38 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        let mut pending_tokens = Vec::new(); // Buffer for multi-line definitions
         loop {
             let readline = rl.readline(">> ");
             match readline {
                 Ok(line) => {
-                    if !line.trim().is_empty() {
-                        if let Some(ref _path) = history_path {
-                            rl.add_history_entry(line.as_str())?;
-                        }
+                    // Lex this line
+                    let line_tokens: Vec<Token> =
+                        Token::lexer(&line).filter_map(|r| r.ok()).collect();
+                    // Append into pending buffer
+                    pending_tokens.extend(line_tokens);
+                    if pending_tokens.is_empty() {
+                        continue; // nothing to do
                     }
-
-                    // --- Lex, Parse, Eval ---
-                    // Collect only valid tokens, skipping errors
-                    let tokens: Vec<Token> =
-                        Token::lexer(&line).filter_map(|res| res.ok()).collect();
-                    if !tokens.is_empty() {
-                        // Avoid parsing if only whitespace/comments
-                        match parse(tokens) {
-                            Ok(ops) => {
-                                // println!("Parsed: {:?}", ops); // Debug print
-                                match eval(&ops, &mut stack, &mut dictionary) {
-                                    Ok(()) => { /* Successfully evaluated */ }
-                                    Err(e) => {
-                                        eprintln!("Error: {}", e);
-                                        // Optionally clear stack on error, depending on desired Forth behavior
-                                        // stack.clear();
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                // Parser errors are less common with current setup but might occur later
-                                eprintln!("Parse Error: {:?}", e);
+                    // Try parsing buffered tokens
+                    match parse(pending_tokens.clone()) {
+                        Ok(ops) => {
+                            // Successfully parsed a complete definition or sequence
+                            pending_tokens.clear();
+                            if let Err(e) = eval(&ops, &mut stack, &mut dictionary) {
+                                eprintln!("Error: {}", e);
                             }
                         }
+                        Err(e) => {
+                            // If still inside definition or conditional, wait for more lines
+                            if matches!(e, crate::parser::ParseError::UnterminatedDefinition | crate::parser::ParseError::UnterminatedConditional) {
+                                continue;
+                            }
+                            // Otherwise report and clear buffer
+                            eprintln!("Parse Error: {:?}", e);
+                            pending_tokens.clear();
+                        }
                     }
-                    // --- End Lex, Parse, Eval ---
                 }
                 Err(ReadlineError::Interrupted) => {
                     println!("CTRL-C");
@@ -106,31 +103,32 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     } else {
         // Piped input
         let stdin = io::stdin();
+        let mut pending_tokens = Vec::new();
         for line in stdin.lock().lines() {
             match line {
                 Ok(l) => {
-                    // --- Lex, Parse, Eval ---
-                    // Collect only valid tokens, skipping errors
-                    let tokens: Vec<Token> = Token::lexer(&l).filter_map(|res| res.ok()).collect();
-                    if !tokens.is_empty() {
-                        match parse(tokens) {
-                            Ok(ops) => {
-                                // println!("Parsed: {:?}", ops); // Debug print
-                                match eval(&ops, &mut stack, &mut dictionary) {
-                                    Ok(()) => { /* Successfully evaluated */ }
-                                    Err(e) => {
-                                        eprintln!("Error: {}", e);
-                                        // Optionally clear stack on error
-                                        // stack.clear();
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Parse Error: {:?}", e);
+                    // Lex this line
+                    let line_tokens: Vec<Token> = Token::lexer(&l).filter_map(|r| r.ok()).collect();
+                    pending_tokens.extend(line_tokens);
+                    if pending_tokens.is_empty() {
+                        continue;
+                    }
+                    // Try parsing buffered tokens
+                    match parse(pending_tokens.clone()) {
+                        Ok(ops) => {
+                            pending_tokens.clear();
+                            if let Err(e) = eval(&ops, &mut stack, &mut dictionary) {
+                                eprintln!("Error: {}", e);
                             }
                         }
+                        Err(e) => {
+                            if matches!(e, crate::parser::ParseError::UnterminatedDefinition | crate::parser::ParseError::UnterminatedConditional) {
+                                continue;
+                            }
+                            eprintln!("Parse Error: {:?}", e);
+                            pending_tokens.clear();
+                        }
                     }
-                    // --- End Lex, Parse, Eval ---
                 }
                 Err(e) => {
                     eprintln!("Error reading stdin: {}", e);

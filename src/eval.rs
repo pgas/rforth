@@ -106,11 +106,23 @@ pub fn eval(
 mod tests {
     use super::*;
     use crate::parser::ForthOp;
+    use crate::parser::parse;
+    use crate::token::Token;
     use std::collections::HashMap; // Import HashMap for tests
 
     // Helper to create a default dictionary for tests
     fn default_dict() -> HashMap<String, Vec<ForthOp>> {
         HashMap::new()
+    }
+
+    // Helper to run a code string through lex, parse, and eval and return the final stack
+    fn run_forth(code: &str) -> Vec<i64> {
+        let tokens: Vec<Token> = Token::lexer(code).filter_map(|r| r.ok()).collect();
+        let ops = parse(tokens).expect("parse failed");
+        let mut stack = Vec::new();
+        let mut dict = default_dict();
+        eval(&ops, &mut stack, &mut dict).expect("eval failed");
+        stack
     }
 
     // Update existing tests to pass the dictionary
@@ -249,9 +261,10 @@ mod tests {
     // New tests for definitions
     #[test]
     fn test_eval_define_word() {
-        let ops = vec![
-            ForthOp::Define("DOUBLE".to_string(), vec![ForthOp::Push(2), ForthOp::Multiply])
-        ];
+        let ops = vec![ForthOp::Define(
+            "DOUBLE".to_string(),
+            vec![ForthOp::Push(2), ForthOp::Multiply],
+        )];
         let mut stack = Vec::new();
         let mut dict = default_dict();
         let result = eval(&ops, &mut stack, &mut dict);
@@ -265,11 +278,14 @@ mod tests {
     fn test_eval_execute_defined_word() {
         let ops = vec![
             // : DOUBLE 2 * ;
-            ForthOp::Define("DOUBLE".to_string(), vec![ForthOp::Push(2), ForthOp::Multiply]),
+            ForthOp::Define(
+                "DOUBLE".to_string(),
+                vec![ForthOp::Push(2), ForthOp::Multiply],
+            ),
             // 10 DOUBLE .
             ForthOp::Push(10),
             ForthOp::Word("DOUBLE".to_string()), // Execute the defined word
-            // ForthOp::Print, // We can't test print easily, check stack instead
+                                                 // ForthOp::Print, // We can't test print easily, check stack instead
         ];
         let mut stack = Vec::new();
         let mut dict = default_dict();
@@ -283,7 +299,7 @@ mod tests {
         let ops = vec![
             // : TEST 1 ;
             ForthOp::Define("TEST".to_string(), vec![ForthOp::Push(1)]),
-             // : TEST 2 ;
+            // : TEST 2 ;
             ForthOp::Define("TEST".to_string(), vec![ForthOp::Push(2)]),
             // TEST
             ForthOp::Word("TEST".to_string()),
@@ -298,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_eval_defined_word_uses_primitives() {
-         let ops = vec![
+        let ops = vec![
             // : SQUARE DUP * ;
             ForthOp::Define("SQUARE".to_string(), vec![ForthOp::Dup, ForthOp::Multiply]),
             // 5 SQUARE
@@ -312,13 +328,22 @@ mod tests {
         assert_eq!(stack, vec![25]); // 5 * 5 = 25
     }
 
-     #[test]
+    #[test]
     fn test_eval_defined_word_calls_defined_word() {
-         let ops = vec![
+        let ops = vec![
             // : DOUBLE 2 * ;
-            ForthOp::Define("DOUBLE".to_string(), vec![ForthOp::Push(2), ForthOp::Multiply]),
+            ForthOp::Define(
+                "DOUBLE".to_string(),
+                vec![ForthOp::Push(2), ForthOp::Multiply],
+            ),
             // : QUADRUPLE DOUBLE DOUBLE ;
-            ForthOp::Define("QUADRUPLE".to_string(), vec![ForthOp::Word("DOUBLE".to_string()), ForthOp::Word("DOUBLE".to_string())]),
+            ForthOp::Define(
+                "QUADRUPLE".to_string(),
+                vec![
+                    ForthOp::Word("DOUBLE".to_string()),
+                    ForthOp::Word("DOUBLE".to_string()),
+                ],
+            ),
             // 3 QUADRUPLE
             ForthOp::Push(3),
             ForthOp::Word("QUADRUPLE".to_string()),
@@ -330,11 +355,14 @@ mod tests {
         assert_eq!(stack, vec![12]); // 3 * 2 * 2 = 12
     }
 
-     #[test]
+    #[test]
     fn test_eval_unknown_defined_word() {
-         let ops = vec![
+        let ops = vec![
             // : TEST UNKNOWN ; (Define TEST using a word that doesn't exist yet)
-            ForthOp::Define("TEST".to_string(), vec![ForthOp::Word("UNKNOWN".to_string())]),
+            ForthOp::Define(
+                "TEST".to_string(),
+                vec![ForthOp::Word("UNKNOWN".to_string())],
+            ),
             // TEST (Execute TEST)
             ForthOp::Word("TEST".to_string()),
         ];
@@ -343,5 +371,36 @@ mod tests {
         let result = eval(&ops, &mut stack, &mut dict);
         // The error occurs when TEST tries to execute UNKNOWN
         assert_eq!(result, Err(EvalError::UnknownWord("UNKNOWN".to_string())));
+    }
+
+    // Functional tests
+    #[test]
+    fn test_run_arithmetic_sequence() {
+        assert_eq!(run_forth("10 5 + 2 *"), vec![30]);
+        assert_eq!(run_forth("10 5 - 3 /"), vec![((10 - 5) / 3)]);
+    }
+
+    #[test]
+    fn test_run_stack_manipulation() {
+        // 1 2 3 rot -> 2 3 1
+        assert_eq!(run_forth("1 2 3 rot"), vec![2, 3, 1]);
+        // dup and drop
+        assert_eq!(run_forth("4 dup drop"), vec![4]);
+    }
+
+    #[test]
+    fn test_run_definitions() {
+        assert_eq!(run_forth(": double 2 * ; 6 double"), vec![12]);
+        assert_eq!(run_forth(": square dup * ; 3 square"), vec![9]);
+        // nested definitions
+        let result = std::panic::catch_unwind(|| run_forth(": bad : nested ;"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_unknown_word() {
+        // Unknown word should cause panic in run_forth
+        let result = std::panic::catch_unwind(|| run_forth("foo"));
+        assert!(result.is_err());
     }
 }

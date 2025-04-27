@@ -6,6 +6,7 @@ use std::io::{self, BufRead};
 use std::path::PathBuf;
 
 mod eval;
+mod number_ops; // Declare the number_ops module for arithmetic and comparisons
 mod parser;
 mod stack_ops; // Declare the stack_ops module
 mod token;

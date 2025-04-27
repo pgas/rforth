@@ -35,7 +35,7 @@ pub enum Token {
     Integer(i64),
 
     // Word: alphanumeric and permitted symbols
-    #[regex(r"[A-Za-z0-9+\-*/.?]+", |lex| Some(lex.slice().to_string()), priority = 2)]
+    #[regex(r"[A-Za-z0-9+*/.?=<>-]+", |lex| Some(lex.slice().to_string()), priority = 2)]
     Word(String),
     // Logos will emit errors for unrecognized chars which are filtered out
 }

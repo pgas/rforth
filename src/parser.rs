@@ -29,6 +29,10 @@ pub enum ForthOp {
     Define(String, Vec<ForthOp>), // Added: Name and body of the definition
     // Conditional: IF-ELSE-THEN branches
     IfElse(Vec<ForthOp>, Vec<ForthOp>),
+    // Comparisons
+    Eq,
+    Lt,
+    Gt,
 }
 
 impl fmt::Display for ForthOp {
@@ -57,6 +61,9 @@ impl fmt::Display for ForthOp {
             ForthOp::IfElse(then_ops, else_ops) => {
                 write!(f, "IfElse({:?}, {:?})", then_ops, else_ops)
             }
+            ForthOp::Eq => write!(f, "Eq"),
+            ForthOp::Lt => write!(f, "Lt"),
+            ForthOp::Gt => write!(f, "Gt"),
         }
     }
 }
@@ -76,8 +83,11 @@ fn parse_token_to_op(token: Token) -> Option<ForthOp> {
     match token {
         Token::Integer(i) => Some(ForthOp::Push(i)),
         Token::Word(s) => {
-            // Recognize built-in words and operators case-insensitively
             match s.to_lowercase().as_str() {
+                // Comparison operators
+                "=" => Some(ForthOp::Eq),
+                "<" => Some(ForthOp::Lt),
+                ">" => Some(ForthOp::Gt),
                 "+" => Some(ForthOp::Add),
                 "-" => Some(ForthOp::Subtract),
                 "*" => Some(ForthOp::Multiply),

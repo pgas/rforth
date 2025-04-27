@@ -1,5 +1,6 @@
 use crate::parser::ForthOp;
 use crate::stack_ops; // Import the stack_ops module
+use crate::number_ops; // Import arithmetic and comparison ops
 use std::collections::HashMap; // Import HashMap
 use std::fmt;
 
@@ -31,29 +32,14 @@ pub fn eval(
         match op {
             ForthOp::Push(i) => stack.push(*i),
             // Arithmetic
-            ForthOp::Add => {
-                let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                stack.push(a + b);
-            }
-            ForthOp::Subtract => {
-                let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                stack.push(a - b);
-            }
-            ForthOp::Multiply => {
-                let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                stack.push(a * b);
-            }
-            ForthOp::Divide => {
-                let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                if b == 0 {
-                    return Err(EvalError::DivisionByZero);
-                }
-                stack.push(a / b); // Integer division
-            }
+            ForthOp::Add => number_ops::add(stack)?,
+            ForthOp::Subtract => number_ops::subtract(stack)?,
+            ForthOp::Multiply => number_ops::multiply(stack)?,
+            ForthOp::Divide => number_ops::divide(stack)?,
+            // Comparison ops
+            ForthOp::Eq => number_ops::eq(stack)?,
+            ForthOp::Lt => number_ops::lt(stack)?,
+            ForthOp::Gt => number_ops::gt(stack)?,
             // Stack Operations
             ForthOp::Dup => stack_ops::dup(stack)?,
             ForthOp::Drop => stack_ops::drop_(stack)?,
@@ -434,5 +420,36 @@ mod tests {
     #[test]
     fn test_run_if_else_then_false() {
         assert_eq!(run_forth("0 if 2 else 3 then"), vec![3]);
+    }
+
+    // Functional tests for comparison operators
+    #[test]
+    fn test_run_eq_true() {
+        assert_eq!(run_forth("1 1 ="), vec![-1]);
+    }
+
+    #[test]
+    fn test_run_eq_false() {
+        assert_eq!(run_forth("1 2 ="), vec![0]);
+    }
+
+    #[test]
+    fn test_run_lt_true() {
+        assert_eq!(run_forth("1 2 <"), vec![-1]);
+    }
+
+    #[test]
+    fn test_run_lt_false() {
+        assert_eq!(run_forth("2 1 <"), vec![0]);
+    }
+
+    #[test]
+    fn test_run_gt_true() {
+        assert_eq!(run_forth("2 1 >"), vec![-1]);
+    }
+
+    #[test]
+    fn test_run_gt_false() {
+        assert_eq!(run_forth("1 2 >"), vec![0]);
     }
 }

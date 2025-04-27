@@ -1,6 +1,6 @@
+use crate::number_ops; // Import arithmetic and comparison ops
 use crate::parser::ForthOp;
 use crate::stack_ops; // Import the stack_ops module
-use crate::number_ops; // Import arithmetic and comparison ops
 use std::collections::HashMap; // Import HashMap
 use std::fmt;
 
@@ -9,6 +9,7 @@ pub enum EvalError {
     StackUnderflow,
     DivisionByZero,
     UnknownWord(String),
+    CompileOnlyWord(String),
     // Add other potential runtime errors here
 }
 
@@ -18,6 +19,7 @@ impl fmt::Display for EvalError {
             EvalError::StackUnderflow => write!(f, "Stack underflow"),
             EvalError::DivisionByZero => write!(f, "Division by zero"),
             EvalError::UnknownWord(s) => write!(f, "Unknown word: {}", s),
+            EvalError::CompileOnlyWord(s) => write!(f, "Interpreting a compile-only word: {}", s),
         }
     }
 }
@@ -28,8 +30,9 @@ pub fn eval(
     stack: &mut Vec<i64>,
     dictionary: &mut HashMap<String, Vec<ForthOp>>, // Added dictionary
 ) -> Result<(), EvalError> {
-    for op in ops {
-        match op {
+    let mut idx = 0;
+    while idx < ops.len() {
+        match &ops[idx] {
             ForthOp::Push(i) => stack.push(*i),
             // Arithmetic
             ForthOp::Add => number_ops::add(stack)?,
@@ -69,23 +72,8 @@ pub fn eval(
                 // Insert or update the word definition in the dictionary
                 dictionary.insert(name.clone(), body.clone());
             }
-            // Handle Word Lookup and Execution
-            ForthOp::Word(s) => {
-                let upper_s = s.to_uppercase(); // Match definition convention
-                if let Some(defined_ops) = dictionary.get(&upper_s) {
-                    // Execute the sequence of operations defined for this word
-                    // We need to clone the ops because eval takes a slice
-                    // and we might modify the dictionary while executing
-                    let ops_to_run = defined_ops.clone();
-                    eval(&ops_to_run, stack, dictionary)?; // Recursive call
-                } else {
-                    // If not in the dictionary, it's an unknown word
-                    return Err(EvalError::UnknownWord(s.clone()));
-                }
-            }
-            // Conditional execution
+            // Pre-compiled conditional (inside definitions)
             ForthOp::IfElse(then_ops, else_ops) => {
-                // Pop flag from stack
                 let flag = stack.pop().ok_or(EvalError::StackUnderflow)?;
                 if flag != 0 {
                     eval(then_ops, stack, dictionary)?;
@@ -93,7 +81,23 @@ pub fn eval(
                     eval(else_ops, stack, dictionary)?;
                 }
             }
+            // Word tokens (including if/else/then) are only executed if defined in dictionary
+            ForthOp::Word(s) => {
+                let wl = s.to_lowercase();
+                // compile-only words not allowed at runtime
+                if wl == "if" || wl == "else" || wl == "then" {
+                    return Err(EvalError::CompileOnlyWord(s.clone()));
+                }
+                let upper_s = s.to_uppercase(); // Match definition convention
+                if let Some(defined_ops) = dictionary.get(&upper_s) {
+                    let ops_to_run = defined_ops.clone();
+                    eval(&ops_to_run, stack, dictionary)?;
+                } else {
+                    return Err(EvalError::UnknownWord(s.clone()));
+                }
+            }
         }
+        idx += 1;
     }
     Ok(())
 }
@@ -402,24 +406,28 @@ mod tests {
     }
 
     // Functional tests for conditional execution
+    #[should_panic]
     #[test]
     fn test_run_if_then_true() {
-        assert_eq!(run_forth("1 if 2 then"), vec![2]);
+        run_forth("1 if 2 then");
     }
 
+    #[should_panic]
     #[test]
     fn test_run_if_then_false() {
-        assert_eq!(run_forth("0 if 2 then"), Vec::<i64>::new());
+        run_forth("0 if 2 then");
     }
 
+    #[should_panic]
     #[test]
     fn test_run_if_else_then_true() {
-        assert_eq!(run_forth("1 if 2 else 3 then"), vec![2]);
+        run_forth("1 if 2 else 3 then");
     }
 
+    #[should_panic]
     #[test]
     fn test_run_if_else_then_false() {
-        assert_eq!(run_forth("0 if 2 else 3 then"), vec![3]);
+        run_forth("0 if 2 else 3 then");
     }
 
     // Functional tests for comparison operators

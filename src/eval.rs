@@ -1,9 +1,19 @@
 use crate::number_ops; // Import arithmetic and comparison ops
 use crate::parser::ForthOp;
-use crate::parser::ParseError; // Add this import for ParseError
 use crate::stack_ops; // Import the stack_ops module
 use std::collections::HashMap; // Import HashMap
 use std::fmt;
+
+// Import ParseError only for tests
+#[cfg(test)]
+use crate::parser::ParseError;
+
+// Define a structure for dictionary entries
+#[derive(Debug, Clone)]
+pub struct DictEntry {
+    pub body: Vec<ForthOp>,
+    pub immediate: bool,
+}
 
 #[derive(Debug, PartialEq)]
 pub enum EvalError {
@@ -13,6 +23,7 @@ pub enum EvalError {
     CompileOnlyWord(String),  // e.g. IF, THEN, DO, LOOP used at runtime
     LoopStackUnderflow,       // Added: Trying to use LOOP/I without DO
     ControlStructureMismatch, // Added: DO without matching LOOP at runtime (should be caught by parser ideally)
+    NoRecentDefinition,       // Added: When IMMEDIATE is used but no recent definition exists
 }
 
 impl fmt::Display for EvalError {
@@ -26,6 +37,7 @@ impl fmt::Display for EvalError {
             EvalError::ControlStructureMismatch => {
                 write!(f, "Control structure mismatch during execution")
             }
+            EvalError::NoRecentDefinition => write!(f, "No recent definition for IMMEDIATE"),
         }
     }
 }
@@ -59,8 +71,9 @@ fn find_matching_end(
 pub fn eval(
     ops: &[ForthOp],
     stack: &mut Vec<i64>,
-    dictionary: &mut HashMap<String, Vec<ForthOp>>,
+    dictionary: &mut HashMap<String, DictEntry>,
     loop_control_stack: &mut Vec<(usize, i64, i64)>, // (loop_start_idx_after_do, current_index, limit)
+    latest_word: &mut Option<String>,                // Track the latest defined word for IMMEDIATE
 ) -> Result<(), EvalError> {
     let mut idx = 0;
     while idx < ops.len() {
@@ -102,8 +115,23 @@ pub fn eval(
                 }
                 println!();
             }
-            ForthOp::Define(name, body) => {
-                dictionary.insert(name.clone(), body.clone());
+            // Updated to use Define with immediate flag and store in DictEntry
+            ForthOp::Define(name, body, immediate) => {
+                let entry = DictEntry {
+                    body: body.clone(),
+                    immediate: *immediate,
+                };
+                dictionary.insert(name.clone(), entry);
+                *latest_word = Some(name.clone()); // Update latest word for IMMEDIATE
+            }
+            ForthOp::Immediate => {
+                if let Some(word) = latest_word.clone() {
+                    if let Some(entry) = dictionary.get_mut(&word) {
+                        entry.immediate = true;
+                    }
+                } else {
+                    return Err(EvalError::NoRecentDefinition);
+                }
             }
             ForthOp::I => {
                 let (_, current_index, _) = loop_control_stack
@@ -119,9 +147,15 @@ pub fn eval(
                     return Err(EvalError::CompileOnlyWord(s.clone()));
                 }
                 let upper_s = s.to_uppercase();
-                if let Some(defined_ops) = dictionary.get(&upper_s) {
-                    let ops_to_run = defined_ops.clone();
-                    eval(&ops_to_run, stack, dictionary, loop_control_stack)?;
+                if let Some(dict_entry) = dictionary.get(&upper_s) {
+                    let ops_to_run = dict_entry.body.clone();
+                    eval(
+                        &ops_to_run,
+                        stack,
+                        dictionary,
+                        loop_control_stack,
+                        latest_word,
+                    )?;
                 } else {
                     return Err(EvalError::UnknownWord(s.clone()));
                 }
@@ -131,9 +165,9 @@ pub fn eval(
                 let flag = stack.pop().ok_or(EvalError::StackUnderflow)?;
                 if flag != 0 {
                     // Forth true is non-zero
-                    eval(then_ops, stack, dictionary, loop_control_stack)?;
+                    eval(then_ops, stack, dictionary, loop_control_stack, latest_word)?;
                 } else {
-                    eval(else_ops, stack, dictionary, loop_control_stack)?;
+                    eval(else_ops, stack, dictionary, loop_control_stack, latest_word)?;
                 }
                 // next_idx remains idx + 1
             }
@@ -205,11 +239,7 @@ mod tests {
     }
 
     // Helper to create a default dictionary and loop stack for tests
-    fn default_eval_state() -> (
-        Vec<i64>,
-        HashMap<String, Vec<ForthOp>>,
-        Vec<(usize, i64, i64)>,
-    ) {
+    fn default_eval_state() -> (Vec<i64>, HashMap<String, DictEntry>, Vec<(usize, i64, i64)>) {
         (Vec::new(), HashMap::new(), Vec::new())
     }
 
@@ -219,8 +249,15 @@ mod tests {
         // Parse tokens, converting ParseError to TestError
         let ops = parse(tokens)?; // This will use From<ParseError> for TestError
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
+        let mut latest_word = None;
         // Eval, converting EvalError to TestError
-        eval(&ops, &mut stack, &mut dict, &mut loop_stack)?; // This will use From<EvalError> for TestError
+        eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        )?; // This will use From<EvalError> for TestError
         Ok(stack)
     }
 
@@ -230,7 +267,14 @@ mod tests {
     fn test_eval_push_add() {
         let ops = vec![ForthOp::Push(10), ForthOp::Push(20), ForthOp::Add];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![30]);
     }
@@ -247,7 +291,14 @@ mod tests {
             ForthOp::Subtract,
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![22]);
     }
@@ -256,7 +307,14 @@ mod tests {
     fn test_eval_print() {
         let ops = vec![ForthOp::Push(42), ForthOp::Print];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert!(stack.is_empty());
     }
@@ -265,7 +323,14 @@ mod tests {
     fn test_eval_print_stack() {
         let ops = vec![ForthOp::Push(1), ForthOp::Push(2), ForthOp::PrintStack];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![1, 2]);
     }
@@ -274,12 +339,26 @@ mod tests {
     fn test_eval_stack_underflow() {
         let ops = vec![ForthOp::Add];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert_eq!(result, Err(EvalError::StackUnderflow));
 
         let ops_sub = vec![ForthOp::Push(5), ForthOp::Subtract];
         let (mut stack_sub, mut dict_sub, mut loop_stack_sub) = default_eval_state();
-        let result_sub = eval(&ops_sub, &mut stack_sub, &mut dict_sub, &mut loop_stack_sub);
+        let mut latest_word_sub = None;
+        let result_sub = eval(
+            &ops_sub,
+            &mut stack_sub,
+            &mut dict_sub,
+            &mut loop_stack_sub,
+            &mut latest_word_sub,
+        );
         assert_eq!(result_sub, Err(EvalError::StackUnderflow));
     }
 
@@ -287,12 +366,26 @@ mod tests {
     fn test_eval_division_by_zero() {
         let ops = vec![ForthOp::Push(10), ForthOp::Push(0), ForthOp::Divide];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert_eq!(result, Err(EvalError::DivisionByZero));
 
         let ops_mod = vec![ForthOp::Push(10), ForthOp::Push(0), ForthOp::Mod];
         let (mut stack_mod, mut dict_mod, mut loop_stack_mod) = default_eval_state();
-        let result_mod = eval(&ops_mod, &mut stack_mod, &mut dict_mod, &mut loop_stack_mod);
+        let mut latest_word_mod = None;
+        let result_mod = eval(
+            &ops_mod,
+            &mut stack_mod,
+            &mut dict_mod,
+            &mut loop_stack_mod,
+            &mut latest_word_mod,
+        );
         assert_eq!(result_mod, Err(EvalError::DivisionByZero));
     }
 
@@ -300,7 +393,14 @@ mod tests {
     fn test_eval_unknown_word() {
         let ops = vec![ForthOp::Word("foo".to_string())];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert_eq!(result, Err(EvalError::UnknownWord("foo".to_string())));
     }
 
@@ -317,7 +417,14 @@ mod tests {
             ForthOp::Drop,
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![2, 3, 1, 1]);
     }
@@ -335,7 +442,14 @@ mod tests {
             ForthOp::TwoDrop,
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![3, 4, 1, 2, 1, 2]);
     }
@@ -345,13 +459,24 @@ mod tests {
         let ops = vec![ForthOp::Define(
             "DOUBLE".to_string(),
             vec![ForthOp::Push(2), ForthOp::Multiply],
+            false,
         )];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert!(stack.is_empty());
         assert!(dict.contains_key("DOUBLE"));
-        assert_eq!(dict["DOUBLE"], vec![ForthOp::Push(2), ForthOp::Multiply]);
+        assert_eq!(
+            dict["DOUBLE"].body,
+            vec![ForthOp::Push(2), ForthOp::Multiply]
+        );
     }
 
     #[test]
@@ -360,12 +485,20 @@ mod tests {
             ForthOp::Define(
                 "DOUBLE".to_string(),
                 vec![ForthOp::Push(2), ForthOp::Multiply],
+                false,
             ),
             ForthOp::Push(10),
             ForthOp::Word("DOUBLE".to_string()),
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![20]);
     }
@@ -373,26 +506,44 @@ mod tests {
     #[test]
     fn test_eval_redefine_word() {
         let ops = vec![
-            ForthOp::Define("TEST".to_string(), vec![ForthOp::Push(1)]),
-            ForthOp::Define("TEST".to_string(), vec![ForthOp::Push(2)]),
+            ForthOp::Define("TEST".to_string(), vec![ForthOp::Push(1)], false),
+            ForthOp::Define("TEST".to_string(), vec![ForthOp::Push(2)], false),
             ForthOp::Word("TEST".to_string()),
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![2]);
-        assert_eq!(dict["TEST"], vec![ForthOp::Push(2)]);
+        assert_eq!(dict["TEST"].body, vec![ForthOp::Push(2)]);
     }
 
     #[test]
     fn test_eval_defined_word_uses_primitives() {
         let ops = vec![
-            ForthOp::Define("SQUARE".to_string(), vec![ForthOp::Dup, ForthOp::Multiply]),
+            ForthOp::Define(
+                "SQUARE".to_string(),
+                vec![ForthOp::Dup, ForthOp::Multiply],
+                false,
+            ),
             ForthOp::Push(5),
             ForthOp::Word("SQUARE".to_string()),
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![25]);
     }
@@ -403,6 +554,7 @@ mod tests {
             ForthOp::Define(
                 "DOUBLE".to_string(),
                 vec![ForthOp::Push(2), ForthOp::Multiply],
+                false,
             ),
             ForthOp::Define(
                 "QUADRUPLE".to_string(),
@@ -410,12 +562,20 @@ mod tests {
                     ForthOp::Word("DOUBLE".to_string()),
                     ForthOp::Word("DOUBLE".to_string()),
                 ],
+                false,
             ),
             ForthOp::Push(3),
             ForthOp::Word("QUADRUPLE".to_string()),
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert!(result.is_ok());
         assert_eq!(stack, vec![12]);
     }
@@ -426,11 +586,19 @@ mod tests {
             ForthOp::Define(
                 "TEST".to_string(),
                 vec![ForthOp::Word("UNKNOWN".to_string())],
+                false,
             ),
             ForthOp::Word("TEST".to_string()),
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert_eq!(result, Err(EvalError::UnknownWord("UNKNOWN".to_string())));
     }
 
@@ -487,7 +655,14 @@ mod tests {
         // LOOP without DO - This should be a ParseError now, but test eval robustness
         let ops = vec![ForthOp::Loop];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert_eq!(result, Err(EvalError::LoopStackUnderflow));
     }
 
@@ -496,8 +671,60 @@ mod tests {
         // I without DO
         let ops = vec![ForthOp::I];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert_eq!(result, Err(EvalError::LoopStackUnderflow));
+    }
+
+    #[test]
+    fn test_eval_immediate_word_definition() {
+        let ops = vec![ForthOp::Define(
+            "DOUBLE".to_string(),
+            vec![ForthOp::Push(2), ForthOp::Multiply],
+            true, // Immediate flag set to true
+        )];
+        let (mut stack, mut dict, mut loop_stack) = default_eval_state();
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
+        assert!(result.is_ok());
+        assert!(dict.contains_key("DOUBLE"));
+        assert!(dict["DOUBLE"].immediate); // Check that immediate flag is set
+    }
+
+    #[test]
+    fn test_eval_immediate_after_definition() {
+        let ops = vec![
+            ForthOp::Define(
+                "DOUBLE".to_string(),
+                vec![ForthOp::Push(2), ForthOp::Multiply],
+                false, // Not immediate initially
+            ),
+            ForthOp::Immediate, // Mark as immediate after definition
+        ];
+        let (mut stack, mut dict, mut loop_stack) = default_eval_state();
+        let mut latest_word = Some("DOUBLE".to_string()); // Simulate having just defined DOUBLE
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
+        assert!(result.is_ok());
+        assert!(dict.contains_key("DOUBLE"));
+        assert!(dict["DOUBLE"].immediate); // Check that immediate flag is set after IMMEDIATE
     }
 
     #[test]
@@ -509,7 +736,14 @@ mod tests {
             ForthOp::Word("do".to_string()),
         ];
         let (mut stack, mut dict, mut loop_stack) = default_eval_state();
-        let result = eval(&ops, &mut stack, &mut dict, &mut loop_stack);
+        let mut latest_word = None;
+        let result = eval(
+            &ops,
+            &mut stack,
+            &mut dict,
+            &mut loop_stack,
+            &mut latest_word,
+        );
         assert_eq!(result, Err(EvalError::CompileOnlyWord("do".to_string())));
     }
 

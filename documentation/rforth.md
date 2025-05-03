@@ -140,3 +140,51 @@ Examples:
 ( This is a parenthesis comment )
 5 3 * .      ( multiplies 5 and 3, prints 15 )
 ```
+
+### 8. Immediate Words
+
+Immediate words are executed at compile time rather than at runtime. They are useful for meta-programming and implementing custom control structures.
+
+- `IMMEDIATE` : marks the most recently defined word as immediate
+- A word can also be defined as immediate by adding `IMMEDIATE` directly after the definition
+
+Examples:
+
+```forth
+\ Define a word that is immediate from the start
+: ANSWER ( -- n )
+  42  \ This number will be inserted at compile time
+; IMMEDIATE
+
+\ Using the immediate word - it will execute during compilation
+: TEST-IMMEDIATE
+  ANSWER +    \ ANSWER is replaced by 42 during compilation
+;
+
+10 TEST-IMMEDIATE .   \ Prints 52 (10 + 42)
+
+\ Make a word immediate after its definition
+: TRIPLE ( n -- 3n )
+  3 *
+;
+IMMEDIATE  \ Mark TRIPLE as immediate
+
+\ Use TRIPLE in a definition - it executes at compile time
+: TIMES-6
+  TRIPLE DOUBLE  \ TRIPLE executes at compile time
+;
+
+7 TIMES-6 .    \ Prints 42 (7 * 3 * 2)
+```
+
+How Immediate Words Work:
+- Normal words are compiled into a definition and executed when the definition is called
+- Immediate words are executed right away during compilation
+- This allows for compile-time calculations and code transformations
+- The `IMMEDIATE` flag is stored with each word in the dictionary
+
+Use Cases:
+- Custom control structures
+- Compile-time optimizations
+- Code generation
+- Domain-specific language features

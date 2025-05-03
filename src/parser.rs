@@ -1,4 +1,6 @@
+use crate::eval::{DictEntry, eval}; // Removed EvalError import
 use crate::token::Token;
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -26,8 +28,8 @@ pub enum ForthOp {
     Print,      // .
     PrintStack, // .s
     // Other
-    Word(String),                 // For words not yet defined or handled
-    Define(String, Vec<ForthOp>), // Added: Name and body of the definition
+    Word(String),                       // For words not yet defined or handled
+    Define(String, Vec<ForthOp>, bool), // Name, body, and immediate flag
     // Conditional: IF-ELSE-THEN branches
     IfElse(Vec<ForthOp>, Vec<ForthOp>),
     // Comparisons
@@ -38,8 +40,10 @@ pub enum ForthOp {
     Do,
     Loop,
     I, // Pushes current loop index
-       // J, // Pushes outer loop index (for nested loops - maybe later)
-       // Leave, // Exits innermost loop immediately (maybe later)
+    // J, // Pushes outer loop index (for nested loops - maybe later)
+    // Leave, // Exits innermost loop immediately (maybe later)
+    // New operation for immediate mode
+    Immediate, // Sets the most recently defined word to immediate
 }
 
 impl fmt::Display for ForthOp {
@@ -65,7 +69,9 @@ impl fmt::Display for ForthOp {
             ForthOp::Print => write!(f, "Print"),
             ForthOp::PrintStack => write!(f, "PrintStack"),
             ForthOp::Word(s) => write!(f, "Word({})", s),
-            ForthOp::Define(name, ops) => write!(f, "Define({}, {:?})", name, ops), // Added
+            ForthOp::Define(name, ops, immediate) => {
+                write!(f, "Define({}, {:?}, {})", name, ops, immediate)
+            } // Added
             ForthOp::IfElse(then_ops, else_ops) => {
                 write!(f, "IfElse({:?}, {:?})", then_ops, else_ops)
             }
@@ -75,6 +81,7 @@ impl fmt::Display for ForthOp {
             ForthOp::Do => write!(f, "Do"),
             ForthOp::Loop => write!(f, "Loop"),
             ForthOp::I => write!(f, "I"),
+            ForthOp::Immediate => write!(f, "Immediate"),
         }
     }
 }
@@ -89,6 +96,7 @@ pub enum ParseError {
     UnterminatedConditional,
     MismatchedDoLoop,                     // Added
     ControlWordOutsideDefinition(String), // Added: e.g., DO outside : ... ;
+    ImmediateWordError(String),           // Added: Error during immediate word execution
 }
 
 // Helper function to parse a single token into a ForthOp (used in interpret and compile modes)
@@ -119,6 +127,7 @@ fn parse_token_to_op(token: Token) -> Option<ForthOp> {
                 "2swap" => Some(ForthOp::TwoSwap),
                 "2over" => Some(ForthOp::TwoOver),
                 "-rot" => Some(ForthOp::MinusRot),
+                "immediate" => Some(ForthOp::Immediate),
                 _ => Some(ForthOp::Word(s)),
             }
         }
@@ -134,6 +143,10 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
     let mut current_def_name: Option<String> = None;
     let mut current_def_body: Vec<ForthOp> = Vec::new();
     let mut loop_depth = 0; // Track DO...LOOP balance within definition
+    let mut dictionary: HashMap<String, DictEntry> = HashMap::new();
+    let mut latest_word: Option<String> = None;
+    let mut stack: Vec<i64> = Vec::new();
+    let mut loop_control_stack: Vec<(usize, i64, i64)> = Vec::new();
 
     while let Some(token) = token_iter.next() {
         // Skip whitespace and comments
@@ -147,6 +160,27 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
         if compiling {
             // Compile-only IF ... ELSE ... THEN
             if let Token::Word(s) = &token {
+                // Handle immediate words during compilation
+                let upper_s = s.to_uppercase();
+                if let Some(entry) = dictionary.get(&upper_s) {
+                    if entry.immediate {
+                        // Clone the body to avoid borrow issues
+                        let immediate_body = entry.body.clone();
+                        // Execute immediate word directly during compilation
+                        if let Err(e) = eval(
+                            &immediate_body,
+                            &mut stack,
+                            &mut dictionary,
+                            &mut loop_control_stack,
+                            &mut latest_word,
+                        ) {
+                            // Convert EvalError to ParseError
+                            return Err(ParseError::ImmediateWordError(format!("{}: {}", s, e)));
+                        }
+                        continue; // Skip adding to definition
+                    }
+                }
+
                 if s.to_lowercase() == "if" {
                     // Collect then- and else- tokens
                     let mut then_toks = Vec::new();
@@ -195,7 +229,20 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
                     }
                     // End definition
                     let name = current_def_name.take().unwrap();
-                    ops.push(ForthOp::Define(name, current_def_body.clone()));
+                    ops.push(ForthOp::Define(
+                        name.clone(),
+                        current_def_body.clone(),
+                        false,
+                    ));
+
+                    // Update dictionary and latest_word for subsequent IMMEDIATE
+                    let entry = DictEntry {
+                        body: current_def_body.clone(),
+                        immediate: false,
+                    };
+                    dictionary.insert(name.clone(), entry);
+                    latest_word = Some(name);
+
                     current_def_body.clear();
                     compiling = false;
                     loop_depth = 0; // Reset for next potential definition
@@ -203,46 +250,32 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
                 Token::Colon => return Err(ParseError::NestedDefinitionNotSupported),
                 Token::Word(s) => {
                     let lower_s = s.to_lowercase();
-                    match lower_s.as_str() {
-                        "if" => {
-                            // Collect then- and else- tokens
-                            let mut then_toks = Vec::new();
-                            let mut else_toks = Vec::new();
-                            let mut depth = 1;
-                            let mut in_else = false;
-                            while let Some(next_tok) = token_iter.next() {
-                                if let Token::Word(w) = &next_tok {
-                                    let wl = w.to_lowercase();
-                                    if wl == "if" {
-                                        depth += 1;
-                                    } else if wl == "else" && depth == 1 {
-                                        in_else = true;
-                                        continue;
-                                    } else if wl == "then" {
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            break;
-                                        }
-                                    }
-                                }
-                                if in_else {
-                                    else_toks.push(next_tok.clone());
-                                } else {
-                                    then_toks.push(next_tok.clone());
-                                }
+
+                    // Check if this is an immediate word
+                    let upper_s = s.to_uppercase();
+                    if let Some(entry) = dictionary.get(&upper_s) {
+                        if entry.immediate {
+                            // Clone the body to avoid borrow issues
+                            let immediate_body = entry.body.clone();
+                            // Execute immediate word directly during compilation
+                            if let Err(e) = eval(
+                                &immediate_body,
+                                &mut stack,
+                                &mut dictionary,
+                                &mut loop_control_stack,
+                                &mut latest_word,
+                            ) {
+                                // Convert EvalError to ParseError
+                                return Err(ParseError::ImmediateWordError(format!(
+                                    "{}: {}",
+                                    s, e
+                                )));
                             }
-                            if depth != 0 {
-                                return Err(ParseError::UnterminatedConditional);
-                            }
-                            // Parse branches and append to definition body
-                            let then_ops = parse(then_toks)?;
-                            let else_ops = if in_else {
-                                parse(else_toks)?
-                            } else {
-                                Vec::new()
-                            };
-                            current_def_body.push(ForthOp::IfElse(then_ops, else_ops));
+                            continue; // Skip adding to definition
                         }
+                    }
+
+                    match lower_s.as_str() {
                         "do" => {
                             current_def_body.push(ForthOp::Do);
                             loop_depth += 1;
@@ -258,6 +291,11 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
                             // 'i' is only meaningful inside a loop, but we parse it anyway.
                             // Runtime check will happen in eval.
                             current_def_body.push(ForthOp::I);
+                        }
+                        "immediate" => {
+                            // IMMEDIATE is handled separately during execution,
+                            // but we still add it to the definition
+                            current_def_body.push(ForthOp::Immediate);
                         }
                         // Handle other words normally within definition
                         _ => {
@@ -305,6 +343,15 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
                     {
                         return Err(ParseError::ControlWordOutsideDefinition(s));
                     }
+
+                    // Handle IMMEDIATE in interpret mode
+                    if lower_s == "immediate" {
+                        // We'll allow IMMEDIATE without reporting an error
+                        // since latest_word will be checked during evaluation
+                        ops.push(ForthOp::Immediate);
+                        continue;
+                    }
+
                     // Regular word or number
                     if let Some(op) = parse_token_to_op(Token::Word(s.clone())) {
                         ops.push(op);
@@ -451,6 +498,7 @@ mod tests {
         let expected_ops = Ok(vec![ForthOp::Define(
             "DOUBLE".to_string(),
             vec![ForthOp::Push(2), ForthOp::Multiply],
+            false,
         )]);
         assert_eq!(parse(tokens), expected_ops);
     }
@@ -469,7 +517,11 @@ mod tests {
         ];
         let expected_ops = Ok(vec![
             ForthOp::Push(10),
-            ForthOp::Define("SQUARE".to_string(), vec![ForthOp::Dup, ForthOp::Multiply]),
+            ForthOp::Define(
+                "SQUARE".to_string(),
+                vec![ForthOp::Dup, ForthOp::Multiply],
+                false,
+            ),
             ForthOp::Word("SQUARE".to_string()),
             ForthOp::Print,
         ]);
@@ -590,7 +642,11 @@ mod tests {
             ForthOp::Print,
             ForthOp::Loop,
         ];
-        let expected_ops = Ok(vec![ForthOp::Define("TEST".to_string(), expected_body)]);
+        let expected_ops = Ok(vec![ForthOp::Define(
+            "TEST".to_string(),
+            expected_body,
+            false,
+        )]);
         assert_eq!(parse(tokens), expected_ops);
     }
 

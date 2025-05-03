@@ -11,9 +11,8 @@ mod parser;
 mod stack_ops; // Declare the stack_ops module
 mod token;
 
-use crate::eval::eval; // Import eval function
-use crate::parser::ForthOp; // Import ForthOp
-use crate::parser::parse;
+use crate::eval::{DictEntry, eval}; // Import eval function and DictEntry
+use crate::parser::{ForthOp, parse};
 use logos::Logos;
 use token::Token; // Import parse function
 
@@ -30,8 +29,9 @@ fn process_line(
     line: &str,
     pending_tokens: &mut Vec<Token>,
     stack: &mut Vec<i64>,
-    dictionary: &mut HashMap<String, Vec<ForthOp>>,
+    dictionary: &mut HashMap<String, DictEntry>,
     loop_control_stack: &mut Vec<(usize, i64, i64)>, // Added loop stack
+    latest_word: &mut Option<String>,                // Added latest word tracking
 ) {
     // Lex this line
     let line_tokens: Vec<Token> = Token::lexer(line).filter_map(|r| r.ok()).collect();
@@ -45,8 +45,16 @@ fn process_line(
         Ok(ops) => {
             // Successfully parsed a complete definition or sequence
             pending_tokens.clear();
-            // Pass loop_control_stack to eval
-            if let Err(e) = eval(&ops, stack, dictionary, loop_control_stack) {
+
+            // Check for Define operation to update latest_word
+            for op in &ops {
+                if let ForthOp::Define(name, _, _) = op {
+                    *latest_word = Some(name.clone());
+                }
+            }
+
+            // Pass loop_control_stack and latest_word to eval
+            if let Err(e) = eval(&ops, stack, dictionary, loop_control_stack, latest_word) {
                 eprintln!("Error: {}", e);
                 // Consider clearing loop_control_stack on error? Maybe not, depends on desired behavior.
             }
@@ -74,8 +82,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let history_path = get_history_path();
     let mut stack: Vec<i64> = Vec::new(); // The Forth stack
-    let mut dictionary: HashMap<String, Vec<ForthOp>> = HashMap::new(); // Create the dictionary
+    let mut dictionary: HashMap<String, DictEntry> = HashMap::new(); // Create the dictionary
     let mut loop_control_stack: Vec<(usize, i64, i64)> = Vec::new(); // Initialize loop stack
+    let mut latest_word: Option<String> = None; // Initialize latest word tracking
 
     let mut pending_tokens = Vec::new(); // Buffer for multi-line definitions
 
@@ -100,13 +109,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 Ok(line) => {
                     // Add line to history before processing
                     let _ = rl.add_history_entry(line.as_str());
-                    // Pass loop_control_stack to process_line
+                    // Pass loop_control_stack and latest_word to process_line
                     process_line(
                         &line,
                         &mut pending_tokens,
                         &mut stack,
                         &mut dictionary,
                         &mut loop_control_stack,
+                        &mut latest_word,
                     );
                 }
                 Err(ReadlineError::Interrupted) => {
@@ -134,13 +144,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         for line in stdin.lock().lines() {
             match line {
                 Ok(l) => {
-                    // Pass loop_control_stack to process_line
+                    // Pass loop_control_stack and latest_word to process_line
                     process_line(
                         &l,
                         &mut pending_tokens,
                         &mut stack,
                         &mut dictionary,
                         &mut loop_control_stack,
+                        &mut latest_word,
                     );
                 }
                 Err(e) => {
@@ -156,9 +167,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         if !pending_tokens.is_empty() {
             match parse(pending_tokens.clone()) {
                 Ok(ops) => {
-                    // Pass loop_control_stack to final eval
-                    if let Err(e) = eval(&ops, &mut stack, &mut dictionary, &mut loop_control_stack)
-                    {
+                    // Pass loop_control_stack and latest_word to final eval
+                    if let Err(e) = eval(
+                        &ops,
+                        &mut stack,
+                        &mut dictionary,
+                        &mut loop_control_stack,
+                        &mut latest_word,
+                    ) {
                         eprintln!("Error processing remaining input: {}", e);
                     }
                 }

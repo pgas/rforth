@@ -31,6 +31,7 @@ fn process_line(
     pending_tokens: &mut Vec<Token>,
     stack: &mut Vec<i64>,
     dictionary: &mut HashMap<String, Vec<ForthOp>>,
+    loop_control_stack: &mut Vec<(usize, i64, i64)>, // Added loop stack
 ) {
     // Lex this line
     let line_tokens: Vec<Token> = Token::lexer(line).filter_map(|r| r.ok()).collect();
@@ -44,8 +45,10 @@ fn process_line(
         Ok(ops) => {
             // Successfully parsed a complete definition or sequence
             pending_tokens.clear();
-            if let Err(e) = eval(&ops, stack, dictionary) {
+            // Pass loop_control_stack to eval
+            if let Err(e) = eval(&ops, stack, dictionary, loop_control_stack) {
                 eprintln!("Error: {}", e);
+                // Consider clearing loop_control_stack on error? Maybe not, depends on desired behavior.
             }
         }
         Err(e) => {
@@ -72,6 +75,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let history_path = get_history_path();
     let mut stack: Vec<i64> = Vec::new(); // The Forth stack
     let mut dictionary: HashMap<String, Vec<ForthOp>> = HashMap::new(); // Create the dictionary
+    let mut loop_control_stack: Vec<(usize, i64, i64)> = Vec::new(); // Initialize loop stack
 
     let mut pending_tokens = Vec::new(); // Buffer for multi-line definitions
 
@@ -96,7 +100,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 Ok(line) => {
                     // Add line to history before processing
                     let _ = rl.add_history_entry(line.as_str());
-                    process_line(&line, &mut pending_tokens, &mut stack, &mut dictionary);
+                    // Pass loop_control_stack to process_line
+                    process_line(
+                        &line,
+                        &mut pending_tokens,
+                        &mut stack,
+                        &mut dictionary,
+                        &mut loop_control_stack,
+                    );
                 }
                 Err(ReadlineError::Interrupted) => {
                     println!("CTRL-C");
@@ -123,7 +134,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         for line in stdin.lock().lines() {
             match line {
                 Ok(l) => {
-                    process_line(&l, &mut pending_tokens, &mut stack, &mut dictionary);
+                    // Pass loop_control_stack to process_line
+                    process_line(
+                        &l,
+                        &mut pending_tokens,
+                        &mut stack,
+                        &mut dictionary,
+                        &mut loop_control_stack,
+                    );
                 }
                 Err(e) => {
                     eprintln!("Error reading stdin: {}", e);
@@ -138,7 +156,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         if !pending_tokens.is_empty() {
             match parse(pending_tokens.clone()) {
                 Ok(ops) => {
-                    if let Err(e) = eval(&ops, &mut stack, &mut dictionary) {
+                    // Pass loop_control_stack to final eval
+                    if let Err(e) = eval(&ops, &mut stack, &mut dictionary, &mut loop_control_stack)
+                    {
                         eprintln!("Error processing remaining input: {}", e);
                     }
                 }
@@ -157,6 +177,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 }
             }
             pending_tokens.clear(); // Clear buffer regardless
+        }
+        // Check if loop stack is non-empty at the end (indicates unterminated loop in piped input)
+        if !loop_control_stack.is_empty() {
+            eprintln!("Warning: Input ended with unbalanced DO/LOOP structures.");
+            // Optionally clear the loop stack here if desired
+            // loop_control_stack.clear();
         }
     }
 

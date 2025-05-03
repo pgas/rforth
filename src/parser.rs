@@ -34,6 +34,12 @@ pub enum ForthOp {
     Eq,
     Lt,
     Gt,
+    // Loop constructs (compile-time only)
+    Do,
+    Loop,
+    I, // Pushes current loop index
+       // J, // Pushes outer loop index (for nested loops - maybe later)
+       // Leave, // Exits innermost loop immediately (maybe later)
 }
 
 impl fmt::Display for ForthOp {
@@ -66,6 +72,9 @@ impl fmt::Display for ForthOp {
             ForthOp::Eq => write!(f, "Eq"),
             ForthOp::Lt => write!(f, "Lt"),
             ForthOp::Gt => write!(f, "Gt"),
+            ForthOp::Do => write!(f, "Do"),
+            ForthOp::Loop => write!(f, "Loop"),
+            ForthOp::I => write!(f, "I"),
         }
     }
 }
@@ -78,6 +87,8 @@ pub enum ParseError {
     UnterminatedDefinition,       // E.g., Reached end of input inside definition
     NestedDefinitionNotSupported, // E.g., Colon inside a definition
     UnterminatedConditional,
+    MismatchedDoLoop,                     // Added
+    ControlWordOutsideDefinition(String), // Added: e.g., DO outside : ... ;
 }
 
 // Helper function to parse a single token into a ForthOp (used in interpret and compile modes)
@@ -122,6 +133,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
     let mut compiling = false; // Are we inside a : ... ; definition?
     let mut current_def_name: Option<String> = None;
     let mut current_def_body: Vec<ForthOp> = Vec::new();
+    let mut loop_depth = 0; // Track DO...LOOP balance within definition
 
     while let Some(token) = token_iter.next() {
         // Skip whitespace and comments
@@ -178,13 +190,87 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
             }
             match token {
                 Token::Semicolon => {
+                    if loop_depth != 0 {
+                        return Err(ParseError::MismatchedDoLoop);
+                    }
                     // End definition
                     let name = current_def_name.take().unwrap();
                     ops.push(ForthOp::Define(name, current_def_body.clone()));
                     current_def_body.clear();
                     compiling = false;
+                    loop_depth = 0; // Reset for next potential definition
                 }
                 Token::Colon => return Err(ParseError::NestedDefinitionNotSupported),
+                Token::Word(s) => {
+                    let lower_s = s.to_lowercase();
+                    match lower_s.as_str() {
+                        "if" => {
+                            // Collect then- and else- tokens
+                            let mut then_toks = Vec::new();
+                            let mut else_toks = Vec::new();
+                            let mut depth = 1;
+                            let mut in_else = false;
+                            while let Some(next_tok) = token_iter.next() {
+                                if let Token::Word(w) = &next_tok {
+                                    let wl = w.to_lowercase();
+                                    if wl == "if" {
+                                        depth += 1;
+                                    } else if wl == "else" && depth == 1 {
+                                        in_else = true;
+                                        continue;
+                                    } else if wl == "then" {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if in_else {
+                                    else_toks.push(next_tok.clone());
+                                } else {
+                                    then_toks.push(next_tok.clone());
+                                }
+                            }
+                            if depth != 0 {
+                                return Err(ParseError::UnterminatedConditional);
+                            }
+                            // Parse branches and append to definition body
+                            let then_ops = parse(then_toks)?;
+                            let else_ops = if in_else {
+                                parse(else_toks)?
+                            } else {
+                                Vec::new()
+                            };
+                            current_def_body.push(ForthOp::IfElse(then_ops, else_ops));
+                        }
+                        "do" => {
+                            current_def_body.push(ForthOp::Do);
+                            loop_depth += 1;
+                        }
+                        "loop" => {
+                            if loop_depth == 0 {
+                                return Err(ParseError::MismatchedDoLoop);
+                            }
+                            current_def_body.push(ForthOp::Loop);
+                            loop_depth -= 1;
+                        }
+                        "i" => {
+                            // 'i' is only meaningful inside a loop, but we parse it anyway.
+                            // Runtime check will happen in eval.
+                            current_def_body.push(ForthOp::I);
+                        }
+                        // Handle other words normally within definition
+                        _ => {
+                            if let Some(op) = parse_token_to_op(Token::Word(s.clone())) {
+                                current_def_body.push(op);
+                            } else {
+                                // This case should ideally not be reached if parse_token_to_op handles ForthOp::Word
+                                return Err(ParseError::UnexpectedToken(Token::Word(s)));
+                            }
+                        }
+                    }
+                }
+                // Handle numbers and other potential tokens within definition
                 _ => {
                     if let Some(op) = parse_token_to_op(token.clone()) {
                         current_def_body.push(op);
@@ -207,37 +293,28 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
                     }
                 }
                 Token::Semicolon => return Err(ParseError::UnexpectedToken(Token::Semicolon)),
-                other => {
-                    // If this is 'if', consume until matching 'then', pushing all as Word
-                    if let Token::Word(ref s) = other {
-                        if s.eq_ignore_ascii_case("if") {
-                            ops.push(ForthOp::Word(s.clone()));
-                            let mut depth = 1;
-                            while let Some(next_tok) = token_iter.next() {
-                                if let Token::Word(ref w) = next_tok {
-                                    let wl = w.to_lowercase();
-                                    ops.push(ForthOp::Word(w.clone()));
-                                    if wl == "if" {
-                                        depth += 1;
-                                    } else if wl == "then" {
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            break;
-                                        }
-                                    }
-                                    continue;
-                                }
-                                // Non-word tokens: parse normally
-                                if let Some(op) = parse_token_to_op(next_tok.clone()) {
-                                    ops.push(op);
-                                } else {
-                                    return Err(ParseError::UnexpectedToken(next_tok));
-                                }
-                            }
-                            continue; // done handling 'if'
-                        }
+                Token::Word(s) => {
+                    // Check for control words used outside definition
+                    let lower_s = s.to_lowercase();
+                    if lower_s == "do"
+                        || lower_s == "loop"
+                        || lower_s == "i"
+                        || lower_s == "if"
+                        || lower_s == "else"
+                        || lower_s == "then"
+                    {
+                        return Err(ParseError::ControlWordOutsideDefinition(s));
                     }
-                    // Regular token: parse normally
+                    // Regular word or number
+                    if let Some(op) = parse_token_to_op(Token::Word(s.clone())) {
+                        ops.push(op);
+                    } else {
+                        // This case should ideally not be reached
+                        return Err(ParseError::UnexpectedToken(Token::Word(s)));
+                    }
+                }
+                // Handle numbers etc. outside definition
+                other => {
                     if let Some(op) = parse_token_to_op(other.clone()) {
                         ops.push(op);
                     } else {
@@ -248,9 +325,12 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
         }
     }
 
-    // Check if we ended mid-definition
+    // Check if we ended mid-definition or with unbalanced loops
     if compiling {
+        // Change the error priority - UnterminatedDefinition takes precedence
         return Err(ParseError::UnterminatedDefinition);
+        // The MismatchedDoLoop check becomes unreachable now,
+        // as UnterminatedDefinition error is returned first
     }
 
     Ok(ops)
@@ -447,56 +527,129 @@ mod tests {
     fn test_parse_if_then() {
         let tokens = vec![
             Token::Integer(1),
-            Token::Word("if".to_string()),
+            Token::Word("if".to_string()), // Should cause error
             Token::Word("dup".to_string()),
             Token::Word("then".to_string()),
         ];
-        let expected = Ok(vec![
-            ForthOp::Push(1),
-            ForthOp::Word("if".to_string()),
-            ForthOp::Word("dup".to_string()),
-            ForthOp::Word("then".to_string()),
-        ]);
-        assert_eq!(parse(tokens), expected);
+        assert_eq!(
+            parse(tokens),
+            Err(ParseError::ControlWordOutsideDefinition("if".to_string()))
+        );
     }
 
     #[test]
     fn test_parse_if_else_then() {
         let tokens = vec![
             Token::Integer(0),
-            Token::Word("if".to_string()),
+            Token::Word("if".to_string()), // Should cause error
             Token::Word("dup".to_string()),
             Token::Word("else".to_string()),
             Token::Word("swap".to_string()),
             Token::Word("then".to_string()),
         ];
-        let expected = Ok(vec![
-            ForthOp::Push(0),
-            ForthOp::Word("if".to_string()),
-            ForthOp::Word("dup".to_string()),
-            ForthOp::Word("else".to_string()),
-            ForthOp::Word("swap".to_string()),
-            ForthOp::Word("then".to_string()),
-        ]);
-        assert_eq!(parse(tokens), expected);
+        assert_eq!(
+            parse(tokens),
+            Err(ParseError::ControlWordOutsideDefinition("if".to_string()))
+        );
     }
 
     #[test]
     fn test_parse_nested_if() {
         let tokens = vec![
-            Token::Word("if".to_string()),
+            Token::Word("if".to_string()), // Should cause error
             Token::Word("if".to_string()),
             Token::Word("dup".to_string()),
             Token::Word("then".to_string()),
             Token::Word("then".to_string()),
         ];
-        let expected = Ok(vec![
-            ForthOp::Word("if".to_string()),
-            ForthOp::Word("if".to_string()),
-            ForthOp::Word("dup".to_string()),
-            ForthOp::Word("then".to_string()),
-            ForthOp::Word("then".to_string()),
-        ]);
-        assert_eq!(parse(tokens), expected);
+        assert_eq!(
+            parse(tokens),
+            Err(ParseError::ControlWordOutsideDefinition("if".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_definition_with_loop() {
+        // : TEST 10 0 DO I . LOOP ;
+        let tokens = vec![
+            Token::Colon,
+            Token::Word("TEST".to_string()),
+            Token::Integer(10),
+            Token::Integer(0),
+            Token::Word("DO".to_string()),
+            Token::Word("I".to_string()),
+            Token::Word(".".to_string()),
+            Token::Word("LOOP".to_string()),
+            Token::Semicolon,
+        ];
+        let expected_body = vec![
+            ForthOp::Push(10),
+            ForthOp::Push(0),
+            ForthOp::Do,
+            ForthOp::I,
+            ForthOp::Print,
+            ForthOp::Loop,
+        ];
+        let expected_ops = Ok(vec![ForthOp::Define("TEST".to_string(), expected_body)]);
+        assert_eq!(parse(tokens), expected_ops);
+    }
+
+    #[test]
+    fn test_parse_error_mismatched_do_loop_extra_loop() {
+        // : TEST LOOP ;
+        let tokens = vec![
+            Token::Colon,
+            Token::Word("TEST".to_string()),
+            Token::Word("LOOP".to_string()),
+            Token::Semicolon,
+        ];
+        assert_eq!(parse(tokens), Err(ParseError::MismatchedDoLoop));
+    }
+
+    #[test]
+    fn test_parse_error_mismatched_do_loop_unclosed_do() {
+        // : TEST DO ;
+        let tokens = vec![
+            Token::Colon,
+            Token::Word("TEST".to_string()),
+            Token::Word("DO".to_string()),
+            Token::Semicolon,
+        ];
+        assert_eq!(parse(tokens), Err(ParseError::MismatchedDoLoop)); // Error detected at Semicolon
+    }
+
+    #[test]
+    fn test_parse_error_mismatched_do_loop_unclosed_do_eof() {
+        // : TEST DO
+        let tokens = vec![
+            Token::Colon,
+            Token::Word("TEST".to_string()),
+            Token::Word("DO".to_string()),
+        ];
+        // Error detected at EOF check
+        assert_eq!(parse(tokens), Err(ParseError::UnterminatedDefinition));
+        // A more specific error might be better, but this works for now.
+        // If we refine EOF checking, it could become MismatchedDoLoop.
+    }
+
+    #[test]
+    fn test_parse_error_control_word_outside_definition() {
+        let tokens_do = vec![Token::Word("do".to_string())];
+        assert_eq!(
+            parse(tokens_do),
+            Err(ParseError::ControlWordOutsideDefinition("do".to_string()))
+        );
+
+        let tokens_loop = vec![Token::Word("loop".to_string())];
+        assert_eq!(
+            parse(tokens_loop),
+            Err(ParseError::ControlWordOutsideDefinition("loop".to_string()))
+        );
+
+        let tokens_i = vec![Token::Word("i".to_string())];
+        assert_eq!(
+            parse(tokens_i),
+            Err(ParseError::ControlWordOutsideDefinition("i".to_string()))
+        );
     }
 }

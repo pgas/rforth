@@ -66,6 +66,7 @@ mod tests {
     }
 
     // Helper to lex a string and collect results including errors
+    #[allow(dead_code)]
     fn lex_string_results(input: &str) -> Vec<Result<Token, LexingError>> {
         Token::lexer(input).collect()
     }

@@ -1,27 +1,55 @@
-use rustyline::DefaultEditor;
+#[cfg(feature = "jit")]
+use inkwell::context::Context;
 use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 use std::collections::HashMap; // Import HashMap
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::PathBuf;
 
 mod eval;
+mod jit;
 mod number_ops; // Declare the number_ops module for arithmetic and comparisons
 mod parser;
 mod stack_ops; // Declare the stack_ops module
-mod token;
+mod token; // Add the JIT module
 
-use crate::eval::{DictEntry, eval}; // Import eval function and DictEntry
-use crate::parser::{ForthOp, parse};
+use crate::eval::{DictEntry, Evaluator}; // Updated import to use Evaluator instead of eval function
+#[cfg(feature = "jit")]
+use crate::jit::jit_impl::ForthJit;
+use crate::parser::{parse, ForthOp};
 use logos::Logos;
 use token::Token; // Import parse function
 
-fn get_history_path() -> Option<PathBuf> {
-    home::home_dir().map(|mut path| {
-        path.push(".rforth");
-        path.push("history");
-        path
-    })
+// Store JIT context in a thread-local variable instead of a static mut
+#[cfg(feature = "jit")]
+thread_local! {
+    static JIT_CONTEXT: Context = Context::create();
+}
+
+// Create a new function to evaluate operations to replace direct eval calls
+fn evaluate_ops(
+    ops: &[ForthOp],
+    stack: &mut Vec<i64>,
+    dictionary: &mut HashMap<String, DictEntry>,
+    _loop_control_stack: &mut Vec<(usize, i64, i64)>, // Prefixed with _ to indicate it's intentionally unused
+    _latest_word: &mut Option<String>, // Prefixed with _ to indicate it's intentionally unused
+) -> Result<(), anyhow::Error> {
+    // Create a temporary evaluator that processes the operations
+    let mut evaluator = Evaluator::new(false);
+
+    // Initialize the evaluator with current state
+    *evaluator.get_stack_mut() = stack.clone();
+    evaluator.import_dictionary(dictionary);
+
+    // Process operations
+    evaluator.eval(ops)?;
+
+    // Update the caller's state
+    *stack = evaluator.get_stack().clone();
+    *dictionary = evaluator.get_dictionary().clone();
+
+    Ok(())
 }
 
 // Function to process a line of input
@@ -40,6 +68,7 @@ fn process_line(
     if pending_tokens.is_empty() {
         return; // nothing to do
     }
+
     // Try parsing buffered tokens
     match parse(pending_tokens.clone()) {
         Ok(ops) => {
@@ -48,13 +77,21 @@ fn process_line(
 
             // Check for Define operation to update latest_word
             for op in &ops {
-                if let ForthOp::Define(name, _, _) = op {
+                if let ForthOp::Define(name, body, immediate) = op {
                     *latest_word = Some(name.clone());
+
+                    // JIT compile newly defined words when appropriate
+                    #[cfg(feature = "jit")]
+                    if !immediate {
+                        if let Err(e) = jit_compile_word(name, body, dictionary) {
+                            eprintln!("JIT compilation error: {}", e);
+                        }
+                    }
                 }
             }
 
             // Pass loop_control_stack and latest_word to eval
-            if let Err(e) = eval(&ops, stack, dictionary, loop_control_stack, latest_word) {
+            if let Err(e) = evaluate_ops(&ops, stack, dictionary, loop_control_stack, latest_word) {
                 eprintln!("Error: {}", e);
                 // Consider clearing loop_control_stack on error? Maybe not, depends on desired behavior.
             }
@@ -76,9 +113,44 @@ fn process_line(
     }
 }
 
+#[cfg(feature = "jit")]
+fn jit_compile_word(
+    name: &str,
+    body: &[ForthOp],
+    dictionary: &mut HashMap<String, DictEntry>,
+) -> Result<(), anyhow::Error> {
+    // Use the thread-local JIT context
+    JIT_CONTEXT.with(|ctx| {
+        // Create a JIT compiler with this context
+        let mut jit_compiler = ForthJit::new(ctx)?;
+
+        // Try to compile the word
+        match jit_compiler.compile_word(name, body) {
+            Ok(compiled_fn) => {
+                if let Some(entry) = dictionary.get_mut(name) {
+                    entry.compiled_code = Some(compiled_fn);
+                    println!("JIT compiled: {}", name);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // Just a warning - we'll fall back to interpreter
+                eprintln!("JIT compilation warning for {}: {:?}", name, e);
+                Ok(())
+            }
+        }
+    })
+}
+
 // Use std::result::Result to avoid conflict with rustyline::Result
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("welcome to rforth");
+
+    #[cfg(feature = "jit")]
+    {
+        println!("JIT compilation enabled");
+        // The JIT context is initialized lazily via the thread_local! macro
+    }
 
     let history_path = get_history_path();
     let mut stack: Vec<i64> = Vec::new(); // The Forth stack
@@ -168,7 +240,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             match parse(pending_tokens.clone()) {
                 Ok(ops) => {
                     // Pass loop_control_stack and latest_word to final eval
-                    if let Err(e) = eval(
+                    if let Err(e) = evaluate_ops(
                         &ops,
                         &mut stack,
                         &mut dictionary,
@@ -203,6 +275,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+// Add this function at the end of the file, before the tests module
+
+// Returns the path to the history file
+fn get_history_path() -> Option<PathBuf> {
+    home::home_dir().map(|dir| dir.join(".rforth").join("history"))
 }
 
 #[cfg(test)]

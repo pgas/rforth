@@ -1,118 +1,112 @@
-use crate::eval::EvalError; // Import EvalError
+use anyhow::{anyhow, Result};
 
-// Helper macro for checking stack depth
-macro_rules! check_depth {
-    ($stack:expr, $depth:expr) => {
-        if $stack.len() < $depth {
-            return Err(EvalError::StackUnderflow);
-        }
-    };
-}
-
-// ( n -- n n )
-pub fn dup(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 1);
-    stack.push(stack.last().unwrap().clone());
+// Stack operations
+pub fn dup(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.is_empty() {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let value = *stack.last().unwrap();
+    stack.push(value);
     Ok(())
 }
 
-// ( n -- )
-pub fn drop_(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 1);
+pub fn drop_(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.is_empty() {
+        return Err(anyhow!("Stack underflow"));
+    }
     stack.pop();
     Ok(())
 }
 
-// ( n1 n2 -- n2 n1 )
-pub fn swap(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 2);
-    let n2 = stack.pop().unwrap();
-    let n1 = stack.pop().unwrap();
-    stack.push(n2);
-    stack.push(n1);
+pub fn swap(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.len() < 2 {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let len = stack.len();
+    stack.swap(len - 1, len - 2);
     Ok(())
 }
 
-// ( n1 n2 -- n1 n2 n1 )
-pub fn over(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 2);
-    let n1 = stack[stack.len() - 2];
-    stack.push(n1);
+pub fn over(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.len() < 2 {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let value = stack[stack.len() - 2];
+    stack.push(value);
     Ok(())
 }
 
-// ( n1 n2 n3 -- n2 n3 n1 )
-pub fn rot(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 3);
-    let n3 = stack.pop().unwrap();
-    let n2 = stack.pop().unwrap();
-    let n1 = stack.pop().unwrap();
-    stack.push(n2);
-    stack.push(n3);
-    stack.push(n1);
+pub fn rot(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.len() < 3 {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let len = stack.len();
+    let value = stack.remove(len - 3);
+    stack.push(value);
     Ok(())
 }
 
-// ( n -- n n ) or ( 0 -- 0 )
-pub fn q_dup(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 1);
-    if *stack.last().unwrap() != 0 {
-        stack.push(stack.last().unwrap().clone());
+pub fn minus_rot(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.len() < 3 {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let len = stack.len();
+    let value = stack.pop().unwrap();
+    stack.insert(len - 3, value);
+    Ok(())
+}
+
+pub fn q_dup(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.is_empty() {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let value = *stack.last().unwrap();
+    if value != 0 {
+        stack.push(value);
     }
     Ok(())
 }
 
-// ( n1 n2 -- n1 n2 n1 n2 )
-pub fn two_dup(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 2);
-    let n2 = stack.last().unwrap().clone();
-    let n1 = stack[stack.len() - 2];
-    stack.push(n1);
-    stack.push(n2);
+pub fn two_dup(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.len() < 2 {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let len = stack.len();
+    let value1 = stack[len - 2];
+    let value2 = stack[len - 1];
+    stack.push(value1);
+    stack.push(value2);
     Ok(())
 }
 
-// ( n1 n2 -- )
-pub fn two_drop(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 2);
+pub fn two_drop(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.len() < 2 {
+        return Err(anyhow!("Stack underflow"));
+    }
     stack.pop();
     stack.pop();
     Ok(())
 }
 
-// ( n1 n2 n3 n4 -- n3 n4 n1 n2 )
-pub fn two_swap(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 4);
-    let n4 = stack.pop().unwrap();
-    let n3 = stack.pop().unwrap();
-    let n2 = stack.pop().unwrap();
-    let n1 = stack.pop().unwrap();
-    stack.push(n3);
-    stack.push(n4);
-    stack.push(n1);
-    stack.push(n2);
+pub fn two_swap(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.len() < 4 {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let len = stack.len();
+    stack.swap(len - 1, len - 3);
+    stack.swap(len - 2, len - 4);
     Ok(())
 }
 
-// ( n1 n2 n3 n4 -- n1 n2 n3 n4 n1 n2 )
-pub fn two_over(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 4);
-    let n2 = stack[stack.len() - 3];
-    let n1 = stack[stack.len() - 4];
-    stack.push(n1);
-    stack.push(n2);
-    Ok(())
-}
-
-// ( n1 n2 n3 -- n3 n1 n2 )
-pub fn minus_rot(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    check_depth!(stack, 3);
-    let n3 = stack.pop().unwrap();
-    let n2 = stack.pop().unwrap();
-    let n1 = stack.pop().unwrap();
-    stack.push(n3);
-    stack.push(n1);
-    stack.push(n2);
+pub fn two_over(stack: &mut Vec<i64>) -> Result<()> {
+    if stack.len() < 4 {
+        return Err(anyhow!("Stack underflow"));
+    }
+    let len = stack.len();
+    let value1 = stack[len - 4];
+    let value2 = stack[len - 3];
+    stack.push(value1);
+    stack.push(value2);
     Ok(())
 }
 
@@ -125,7 +119,7 @@ mod tests {
         let mut stack = vec![10];
         assert!(dup(&mut stack).is_ok());
         assert_eq!(stack, vec![10, 10]);
-        assert_eq!(dup(&mut vec![]), Err(EvalError::StackUnderflow));
+        assert!(dup(&mut vec![]).is_err());
     }
 
     #[test]
@@ -135,7 +129,7 @@ mod tests {
         assert_eq!(stack, vec![10]);
         assert!(drop_(&mut stack).is_ok());
         assert_eq!(stack, vec![]);
-        assert_eq!(drop_(&mut stack), Err(EvalError::StackUnderflow));
+        assert!(drop_(&mut stack).is_err());
     }
 
     #[test]
@@ -143,7 +137,7 @@ mod tests {
         let mut stack = vec![10, 20];
         assert!(swap(&mut stack).is_ok());
         assert_eq!(stack, vec![20, 10]);
-        assert_eq!(swap(&mut vec![1]), Err(EvalError::StackUnderflow));
+        assert!(swap(&mut vec![1]).is_err());
     }
 
     #[test]
@@ -151,7 +145,7 @@ mod tests {
         let mut stack = vec![10, 20];
         assert!(over(&mut stack).is_ok());
         assert_eq!(stack, vec![10, 20, 10]);
-        assert_eq!(over(&mut vec![1]), Err(EvalError::StackUnderflow));
+        assert!(over(&mut vec![1]).is_err());
     }
 
     #[test]
@@ -159,7 +153,7 @@ mod tests {
         let mut stack = vec![10, 20, 30];
         assert!(rot(&mut stack).is_ok());
         assert_eq!(stack, vec![20, 30, 10]);
-        assert_eq!(rot(&mut vec![1, 2]), Err(EvalError::StackUnderflow));
+        assert!(rot(&mut vec![1, 2]).is_err());
     }
 
     #[test]
@@ -170,7 +164,7 @@ mod tests {
         let mut stack = vec![0];
         assert!(q_dup(&mut stack).is_ok());
         assert_eq!(stack, vec![0]);
-        assert_eq!(q_dup(&mut vec![]), Err(EvalError::StackUnderflow));
+        assert!(q_dup(&mut vec![]).is_err());
     }
 
     #[test]
@@ -178,7 +172,7 @@ mod tests {
         let mut stack = vec![10, 20];
         assert!(two_dup(&mut stack).is_ok());
         assert_eq!(stack, vec![10, 20, 10, 20]);
-        assert_eq!(two_dup(&mut vec![1]), Err(EvalError::StackUnderflow));
+        assert!(two_dup(&mut vec![1]).is_err());
     }
 
     #[test]
@@ -186,7 +180,7 @@ mod tests {
         let mut stack = vec![10, 20, 30];
         assert!(two_drop(&mut stack).is_ok());
         assert_eq!(stack, vec![10]);
-        assert_eq!(two_drop(&mut vec![1]), Err(EvalError::StackUnderflow));
+        assert!(two_drop(&mut vec![1]).is_err());
     }
 
     #[test]
@@ -194,7 +188,7 @@ mod tests {
         let mut stack = vec![10, 20, 30, 40];
         assert!(two_swap(&mut stack).is_ok());
         assert_eq!(stack, vec![30, 40, 10, 20]);
-        assert_eq!(two_swap(&mut vec![1, 2, 3]), Err(EvalError::StackUnderflow));
+        assert!(two_swap(&mut vec![1, 2, 3]).is_err());
     }
 
     #[test]
@@ -202,7 +196,7 @@ mod tests {
         let mut stack = vec![10, 20, 30, 40];
         assert!(two_over(&mut stack).is_ok());
         assert_eq!(stack, vec![10, 20, 30, 40, 10, 20]);
-        assert_eq!(two_over(&mut vec![1, 2, 3]), Err(EvalError::StackUnderflow));
+        assert!(two_over(&mut vec![1, 2, 3]).is_err());
     }
 
     #[test]
@@ -210,6 +204,6 @@ mod tests {
         let mut stack = vec![10, 20, 30];
         assert!(minus_rot(&mut stack).is_ok());
         assert_eq!(stack, vec![30, 10, 20]);
-        assert_eq!(minus_rot(&mut vec![1, 2]), Err(EvalError::StackUnderflow));
+        assert!(minus_rot(&mut vec![1, 2]).is_err());
     }
 }

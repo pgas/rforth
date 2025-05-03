@@ -1,71 +1,73 @@
-use crate::eval::EvalError;
+use anyhow::{anyhow, Result};
 
-// Arithmetic operations
-pub fn add(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    stack.push(a + b);
-    Ok(())
+// Arithmetic operations with checks
+pub fn add(a: i64, b: i64) -> Result<i64> {
+    a.checked_add(b)
+        .ok_or_else(|| anyhow!("Integer overflow in addition"))
 }
 
-pub fn subtract(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    stack.push(a - b);
-    Ok(())
+pub fn subtract(a: i64, b: i64) -> Result<i64> {
+    a.checked_sub(b)
+        .ok_or_else(|| anyhow!("Integer underflow in subtraction"))
 }
 
-pub fn multiply(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    stack.push(a * b);
-    Ok(())
+pub fn multiply(a: i64, b: i64) -> Result<i64> {
+    a.checked_mul(b)
+        .ok_or_else(|| anyhow!("Integer overflow in multiplication"))
 }
 
-pub fn divide(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
+pub fn divide(a: i64, b: i64) -> Result<i64> {
     if b == 0 {
-        return Err(EvalError::DivisionByZero);
+        return Err(anyhow!("Division by zero"));
     }
-    stack.push(a / b);
-    Ok(())
+    a.checked_div(b)
+        .ok_or_else(|| anyhow!("Arithmetic error in division"))
 }
 
-// ( a b -- a % b )
-pub fn mod_op(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
+pub fn modulo(a: i64, b: i64) -> Result<i64> {
     if b == 0 {
-        return Err(EvalError::DivisionByZero);
+        return Err(anyhow!("Division by zero in modulo"));
     }
-    stack.push(a % b);
-    Ok(())
+    a.checked_rem(b)
+        .ok_or_else(|| anyhow!("Arithmetic error in modulo"))
 }
 
-// Comparison operations: push 1 for true, 0 for false
-pub fn eq(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    // Traditional Forth uses -1 (all bits set) for true, 0 for false
-    stack.push(if a == b { -1 } else { 0 });
-    Ok(())
+// Comparison operations
+pub fn equals(a: i64, b: i64) -> i64 {
+    if a == b {
+        -1
+    } else {
+        0
+    }
 }
 
-pub fn lt(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    // True: -1, False: 0
-    stack.push(if a < b { -1 } else { 0 });
-    Ok(())
+pub fn less_than(a: i64, b: i64) -> i64 {
+    if a < b {
+        -1
+    } else {
+        0
+    }
 }
 
-pub fn gt(stack: &mut Vec<i64>) -> Result<(), EvalError> {
-    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-    // True: -1, False: 0
-    stack.push(if a > b { -1 } else { 0 });
-    Ok(())
+pub fn greater_than(a: i64, b: i64) -> i64 {
+    if a > b {
+        -1
+    } else {
+        0
+    }
+}
+
+// Bitwise operations
+pub fn and(a: i64, b: i64) -> i64 {
+    a & b
+}
+
+pub fn or(a: i64, b: i64) -> i64 {
+    a | b
+}
+
+pub fn not(a: i64) -> i64 {
+    !a
 }
 
 #[cfg(test)]
@@ -74,77 +76,65 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let mut s = vec![2, 3];
-        assert!(add(&mut s).is_ok());
-        assert_eq!(s, vec![5]);
+        assert_eq!(add(2, 3).unwrap(), 5);
+        assert!(add(i64::MAX, 1).is_err());
     }
 
     #[test]
     fn test_subtract() {
-        let mut s = vec![5, 2];
-        assert!(subtract(&mut s).is_ok());
-        assert_eq!(s, vec![3]);
+        assert_eq!(subtract(5, 3).unwrap(), 2);
+        assert!(subtract(i64::MIN, 1).is_err());
     }
 
     #[test]
     fn test_multiply() {
-        let mut s = vec![4, 3];
-        assert!(multiply(&mut s).is_ok());
-        assert_eq!(s, vec![12]);
+        assert_eq!(multiply(2, 3).unwrap(), 6);
+        assert!(multiply(i64::MAX, 2).is_err());
     }
 
     #[test]
     fn test_divide() {
-        let mut s = vec![10, 2];
-        assert!(divide(&mut s).is_ok());
-        assert_eq!(s, vec![5]);
-        let mut z = vec![1, 0];
-        assert_eq!(divide(&mut z), Err(EvalError::DivisionByZero));
+        assert_eq!(divide(6, 3).unwrap(), 2);
+        assert!(divide(1, 0).is_err());
     }
 
     #[test]
-    fn test_mod_op() {
-        let mut s = vec![10, 3];
-        assert!(mod_op(&mut s).is_ok());
-        assert_eq!(s, vec![1]); // 10 % 3 = 1
-        let mut s = vec![-10, 3];
-        assert!(mod_op(&mut s).is_ok());
-        assert_eq!(s, vec![-1]); // -10 % 3 = -1 (in Rust)
-        let mut s = vec![10, -3];
-        assert!(mod_op(&mut s).is_ok());
-        assert_eq!(s, vec![1]); // 10 % -3 = 1 (in Rust)
-        let mut s = vec![5, 5];
-        assert!(mod_op(&mut s).is_ok());
-        assert_eq!(s, vec![0]); // 5 % 5 = 0
-        let mut z = vec![1, 0];
-        assert_eq!(mod_op(&mut z), Err(EvalError::DivisionByZero));
-        let mut u = vec![1];
-        assert_eq!(mod_op(&mut u), Err(EvalError::StackUnderflow));
+    fn test_modulo() {
+        assert_eq!(modulo(7, 3).unwrap(), 1);
+        assert!(modulo(1, 0).is_err());
     }
 
     #[test]
-    fn test_eq() {
-        let mut s = vec![2, 2];
-        assert!(eq(&mut s).is_ok());
-        assert_eq!(s, vec![-1]);
-        let mut t = vec![2, 3];
-        assert!(eq(&mut t).is_ok());
-        assert_eq!(t, vec![0]);
+    fn test_equals() {
+        assert_eq!(equals(5, 5), -1);
+        assert_eq!(equals(5, 6), 0);
     }
 
     #[test]
-    fn test_lt_gt() {
-        let mut a = vec![1, 2];
-        assert!(lt(&mut a).is_ok());
-        assert_eq!(a, vec![-1]);
-        let mut b = vec![2, 1];
-        assert!(lt(&mut b).is_ok());
-        assert_eq!(b, vec![0]);
-        let mut c = vec![3, 1];
-        assert!(gt(&mut c).is_ok());
-        assert_eq!(c, vec![-1]);
-        let mut d = vec![1, 3];
-        assert!(gt(&mut d).is_ok());
-        assert_eq!(d, vec![0]);
+    fn test_less_than() {
+        assert_eq!(less_than(3, 5), -1);
+        assert_eq!(less_than(5, 3), 0);
+    }
+
+    #[test]
+    fn test_greater_than() {
+        assert_eq!(greater_than(5, 3), -1);
+        assert_eq!(greater_than(3, 5), 0);
+    }
+
+    #[test]
+    fn test_and() {
+        assert_eq!(and(0b1100, 0b1010), 0b1000);
+    }
+
+    #[test]
+    fn test_or() {
+        assert_eq!(or(0b1100, 0b1010), 0b1110);
+    }
+
+    #[test]
+    fn test_not() {
+        assert_eq!(not(0), -1);
+        assert_eq!(not(-1), 0);
     }
 }

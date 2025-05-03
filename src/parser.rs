@@ -1,4 +1,4 @@
-use crate::eval::{DictEntry, eval}; // Removed EvalError import
+use crate::eval::DictEntry; // Remove eval import which no longer exists
 use crate::token::Token;
 use std::collections::HashMap;
 use std::fmt;
@@ -239,6 +239,8 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<ForthOp>, ParseError> {
                     let entry = DictEntry {
                         body: current_def_body.clone(),
                         immediate: false,
+                        #[cfg(feature = "jit")]
+                        compiled_code: None,
                     };
                     dictionary.insert(name.clone(), entry);
                     latest_word = Some(name);
@@ -708,4 +710,31 @@ mod tests {
             Err(ParseError::ControlWordOutsideDefinition("i".to_string()))
         );
     }
+}
+
+// Add this at the end of the file, after tests module
+
+// Define a local eval function that forwards to Evaluator to keep parser functionality working
+fn eval(
+    ops: &[ForthOp],
+    stack: &mut Vec<i64>,
+    dictionary: &mut std::collections::HashMap<String, DictEntry>,
+    _loop_control_stack: &mut Vec<(usize, i64, i64)>, // Prefixed with underscore to indicate intentional non-use
+    _latest_word: &mut Option<String>, // Prefixed with underscore to indicate intentional non-use
+) -> Result<(), anyhow::Error> {
+    use crate::eval::Evaluator;
+    let mut evaluator = Evaluator::new(true);
+
+    // Initialize evaluator with current state
+    *evaluator.get_stack_mut() = stack.clone();
+    evaluator.import_dictionary(dictionary);
+
+    // Process operations
+    evaluator.eval(ops)?;
+
+    // Update the caller's state
+    *stack = evaluator.get_stack().clone();
+    *dictionary = evaluator.get_dictionary().clone();
+
+    Ok(())
 }

@@ -26,12 +26,14 @@ Once started, you get a `>> ` prompt. Enter Forth words and press Enter to execu
 - `-` : subtraction
 - `*` : multiplication
 - `/` : integer division
+- `mod` : remainder (modulo)
 
 Examples:
 
 ```forth
 3 4 + .   \ pushes 3 and 4, adds to 7, prints 7
 10 2 * .  \ pushes 10 and 2, multiplies to 20, prints 20
+5 2 mod . \ pushes 5 and 2, computes remainder 1, prints 1
 ```
 
 ### 2. Stack Operations
@@ -40,12 +42,20 @@ Examples:
 - `drop` : remove top of stack
 - `swap` : swap top two stack items
 - `over` : copy second item to top
+- `rot`  : rotate top three items (3rd to top)
+- `?dup` : duplicate top of stack only if non-zero
+- `2dup` : duplicate top two stack items
+- `2drop` : remove top two stack items
+- `2swap` : swap top two pairs of items
+- `2over` : copy second pair to top
+- `-rot`  : reverse rotate top three items
 
 Examples:
 
 ```forth
 5 dup * .       \ duplicates 5, multiplies to 25, prints 25
 1 2 swap . .    \ stack [1 2] -> swap to [2 1], prints 2 then 1
+1 2 3 rot . . . \ stack [1 2 3] -> rot to [2 3 1], prints 1 then 3 then 2
 ```
 
 ### 3. Word Definitions
@@ -62,7 +72,7 @@ Examples:
 ### 4. Conditionals
 
 - Only valid inside a word definition (`: ... ;`).
-- True is represented by -1, false by 0.
+- True is represented by non-zero, false by 0.
 
 Examples:
 
@@ -80,7 +90,31 @@ Examples:
 0 SHOW-IFELSE .   \ false branch prints -1
 ```
 
-### 5. Comparisons
+### 5. Loops
+
+- Only valid inside a word definition (`: ... ;`).
+- `DO ... LOOP` : iterate from starting value (inclusive) to limit (exclusive)
+- `I` : push current loop index to the stack (within a DO...LOOP)
+
+Examples:
+
+```forth
+: COUNT-TO-10
+  10 0 DO
+    I .  \ print current index
+  LOOP ;
+COUNT-TO-10  \ prints 0 1 2 3 4 5 6 7 8 9
+
+\ Sum numbers from 0 to n-1
+: SUM ( n -- sum )
+  0 swap  \ start with sum=0
+  0 DO
+    I +    \ add current index to sum
+  LOOP ;
+5 SUM .  \ 0+1+2+3+4 = 10, prints 10
+```
+
+### 6. Comparisons
 
 - `=` : equal
 - `<` : less than
@@ -89,11 +123,11 @@ Examples:
 Examples:
 
 ```forth
-5 5 = .    \ pushes 5 and 5, compares equal (1), prints 1
-3 7 < .    \ pushes 3 and 7, compares less (1), prints 1
+5 5 = .    \ pushes 5 and 5, compares equal (-1), prints -1
+3 7 < .    \ pushes 3 and 7, compares less (-1), prints -1
 ```
 
-### 6. Comments
+### 7. Comments
 
 - Line comments start with `\` and continue to the end of the line.
 - Parenthesis comments are enclosed in `( ... )` and can span within a line.

@@ -39,6 +39,7 @@ pub fn eval(
             ForthOp::Subtract => number_ops::subtract(stack)?,
             ForthOp::Multiply => number_ops::multiply(stack)?,
             ForthOp::Divide => number_ops::divide(stack)?,
+            ForthOp::Mod => number_ops::mod_op(stack)?, // Added Mod
             // Comparison ops
             ForthOp::Eq => number_ops::eq(stack)?,
             ForthOp::Lt => number_ops::lt(stack)?,
@@ -200,6 +201,12 @@ mod tests {
         let mut dict = default_dict();
         let result = eval(&ops, &mut stack, &mut dict); // Pass dict
         assert_eq!(result, Err(EvalError::DivisionByZero));
+
+        let ops_mod = vec![ForthOp::Push(10), ForthOp::Push(0), ForthOp::Mod];
+        let mut stack_mod = Vec::new();
+        let mut dict_mod = default_dict();
+        let result_mod = eval(&ops_mod, &mut stack_mod, &mut dict_mod);
+        assert_eq!(result_mod, Err(EvalError::DivisionByZero));
     }
 
     #[test]
@@ -378,7 +385,7 @@ mod tests {
     #[test]
     fn test_run_arithmetic_sequence() {
         assert_eq!(run_forth("10 5 + 2 *"), vec![30]);
-        assert_eq!(run_forth("10 5 - 3 /"), vec![((10 - 5) / 3)]);
+        assert_eq!(run_forth("10 5 - 3 / 2 mod"), vec![1]); // (10-5)/3 = 1, 1 % 2 = 1
     }
 
     #[test]

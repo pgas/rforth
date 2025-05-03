@@ -32,6 +32,17 @@ pub fn divide(stack: &mut Vec<i64>) -> Result<(), EvalError> {
     Ok(())
 }
 
+// ( a b -- a % b )
+pub fn mod_op(stack: &mut Vec<i64>) -> Result<(), EvalError> {
+    let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
+    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
+    if b == 0 {
+        return Err(EvalError::DivisionByZero);
+    }
+    stack.push(a % b);
+    Ok(())
+}
+
 // Comparison operations: push 1 for true, 0 for false
 pub fn eq(stack: &mut Vec<i64>) -> Result<(), EvalError> {
     let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
@@ -60,7 +71,7 @@ pub fn gt(stack: &mut Vec<i64>) -> Result<(), EvalError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_add() {
         let mut s = vec![2, 3];
@@ -89,6 +100,26 @@ mod tests {
         assert_eq!(s, vec![5]);
         let mut z = vec![1, 0];
         assert_eq!(divide(&mut z), Err(EvalError::DivisionByZero));
+    }
+
+    #[test]
+    fn test_mod_op() {
+        let mut s = vec![10, 3];
+        assert!(mod_op(&mut s).is_ok());
+        assert_eq!(s, vec![1]); // 10 % 3 = 1
+        let mut s = vec![-10, 3];
+        assert!(mod_op(&mut s).is_ok());
+        assert_eq!(s, vec![-1]); // -10 % 3 = -1 (in Rust)
+        let mut s = vec![10, -3];
+        assert!(mod_op(&mut s).is_ok());
+        assert_eq!(s, vec![1]); // 10 % -3 = 1 (in Rust)
+        let mut s = vec![5, 5];
+        assert!(mod_op(&mut s).is_ok());
+        assert_eq!(s, vec![0]); // 5 % 5 = 0
+        let mut z = vec![1, 0];
+        assert_eq!(mod_op(&mut z), Err(EvalError::DivisionByZero));
+        let mut u = vec![1];
+        assert_eq!(mod_op(&mut u), Err(EvalError::StackUnderflow));
     }
 
     #[test]

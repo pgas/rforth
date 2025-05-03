@@ -9,6 +9,7 @@ pub enum ForthOp {
     Subtract,
     Multiply,
     Divide,
+    Mod, // Added Mod
     // Stack
     Dup,      // dup
     Drop,     // drop
@@ -43,6 +44,7 @@ impl fmt::Display for ForthOp {
             ForthOp::Subtract => write!(f, "Subtract"),
             ForthOp::Multiply => write!(f, "Multiply"),
             ForthOp::Divide => write!(f, "Divide"),
+            ForthOp::Mod => write!(f, "Mod"), // Added Mod
             ForthOp::Dup => write!(f, "Dup"),
             ForthOp::Drop => write!(f, "Drop"),
             ForthOp::Swap => write!(f, "Swap"),
@@ -92,6 +94,7 @@ fn parse_token_to_op(token: Token) -> Option<ForthOp> {
                 "-" => Some(ForthOp::Subtract),
                 "*" => Some(ForthOp::Multiply),
                 "/" => Some(ForthOp::Divide),
+                "mod" => Some(ForthOp::Mod), // Added mod
                 "." => Some(ForthOp::Print),
                 ".s" => Some(ForthOp::PrintStack),
                 "dup" => Some(ForthOp::Dup),
@@ -318,6 +321,7 @@ mod tests {
             Token::Word("-".to_string()),
             Token::Word("*".to_string()),
             Token::Word("/".to_string()),
+            Token::Word("mod".to_string()), // Added mod
             Token::Word(".".to_string()),
             Token::Word(".s".to_string()),
             Token::Word("dup".to_string()),
@@ -334,6 +338,7 @@ mod tests {
             ForthOp::Subtract,
             ForthOp::Multiply,
             ForthOp::Divide,
+            ForthOp::Mod, // Added mod
             ForthOp::Print,
             ForthOp::PrintStack,
             ForthOp::Dup,

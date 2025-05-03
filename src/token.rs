@@ -66,7 +66,6 @@ mod tests {
     }
 
     // Helper to lex a string and collect results including errors
-    #[allow(dead_code)]
     fn lex_string_results(input: &str) -> Vec<Result<Token, LexingError>> {
         Token::lexer(input).collect()
     }
@@ -194,8 +193,46 @@ mod tests {
 
     #[test]
     fn test_lex_error_handling() {
-        // Now unrecognized symbols are skipped, so no tokens
+        // First, test the basic case with the filtered lexer function
         assert_eq!(lex_string("#$%"), Vec::<Token>::new());
+
+        // Now test with the unfiltered lexer function to capture errors
+        let results = lex_string_results("#");
+        assert!(!results.is_empty(), "Should have at least one result");
+        assert!(
+            matches!(results[0], Err(_)),
+            "First result should be an error"
+        );
+
+        // Test with multiple invalid characters
+        let results = lex_string_results("#$%");
+        assert_eq!(
+            results.len(),
+            3,
+            "Should have three results for three invalid chars"
+        );
+        assert!(
+            results.iter().all(|r| matches!(r, Err(_))),
+            "All results should be errors"
+        );
+
+        // Test mixed valid and invalid input
+        let results = lex_string_results("123 # abc");
+        // Whitespace is skipped by the lexer, so we only get 3 tokens/errors
+        assert_eq!(
+            results.len(),
+            3,
+            "Should have 3 tokens/errors: '123', '#', 'abc'"
+        );
+
+        // The first token should be Ok(Integer(123))
+        assert!(matches!(results[0], Ok(Token::Integer(123))));
+
+        // The '#' should be an error
+        assert!(matches!(results[1], Err(_)));
+
+        // The 'abc' should be Ok(Word("abc"))
+        assert!(matches!(results[2], Ok(Token::Word(ref s)) if s == "abc"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::number_ops; // Import arithmetic and comparison ops
 use crate::parser::ForthOp;
-use crate::parser::ParseError;  // Add this import for ParseError
+use crate::parser::ParseError; // Add this import for ParseError
 use crate::stack_ops; // Import the stack_ops module
 use std::collections::HashMap; // Import HashMap
 use std::fmt;
@@ -184,20 +184,20 @@ mod tests {
     use crate::token::Token;
     use logos::Logos;
     use std::collections::HashMap;
-    
+
     // Add the TestError enum
     #[derive(Debug, PartialEq)]
     enum TestError {
         Eval(EvalError),
         Parse(ParseError),
     }
-    
+
     impl From<EvalError> for TestError {
         fn from(error: EvalError) -> Self {
             TestError::Eval(error)
         }
     }
-    
+
     impl From<ParseError> for TestError {
         fn from(error: ParseError) -> Self {
             TestError::Parse(error)

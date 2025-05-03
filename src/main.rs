@@ -25,6 +25,46 @@ fn get_history_path() -> Option<PathBuf> {
     })
 }
 
+// Function to process a line of input
+fn process_line(
+    line: &str,
+    pending_tokens: &mut Vec<Token>,
+    stack: &mut Vec<i64>,
+    dictionary: &mut HashMap<String, Vec<ForthOp>>,
+) {
+    // Lex this line
+    let line_tokens: Vec<Token> = Token::lexer(line).filter_map(|r| r.ok()).collect();
+    // Append into pending buffer
+    pending_tokens.extend(line_tokens);
+    if pending_tokens.is_empty() {
+        return; // nothing to do
+    }
+    // Try parsing buffered tokens
+    match parse(pending_tokens.clone()) {
+        Ok(ops) => {
+            // Successfully parsed a complete definition or sequence
+            pending_tokens.clear();
+            if let Err(e) = eval(&ops, stack, dictionary) {
+                eprintln!("Error: {}", e);
+            }
+        }
+        Err(e) => {
+            // If still inside definition or conditional, wait for more lines
+            if matches!(
+                e,
+                crate::parser::ParseError::UnterminatedDefinition
+                    | crate::parser::ParseError::UnterminatedConditional
+            ) {
+                // Do nothing, wait for more input
+            } else {
+                // Otherwise report and clear buffer
+                eprintln!("Parse Error: {:?}", e);
+                pending_tokens.clear();
+            }
+        }
+    }
+}
+
 // Use std::result::Result to avoid conflict with rustyline::Result
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("welcome to rforth");
@@ -32,6 +72,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let history_path = get_history_path();
     let mut stack: Vec<i64> = Vec::new(); // The Forth stack
     let mut dictionary: HashMap<String, Vec<ForthOp>> = HashMap::new(); // Create the dictionary
+
+    let mut pending_tokens = Vec::new(); // Buffer for multi-line definitions
 
     if atty::is(atty::Stream::Stdin) {
         let mut rl = DefaultEditor::new()?;
@@ -48,42 +90,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let mut pending_tokens = Vec::new(); // Buffer for multi-line definitions
         loop {
             let readline = rl.readline(">> ");
             match readline {
                 Ok(line) => {
-                    // Lex this line
-                    let line_tokens: Vec<Token> =
-                        Token::lexer(&line).filter_map(|r| r.ok()).collect();
-                    // Append into pending buffer
-                    pending_tokens.extend(line_tokens);
-                    if pending_tokens.is_empty() {
-                        continue; // nothing to do
-                    }
-                    // Try parsing buffered tokens
-                    match parse(pending_tokens.clone()) {
-                        Ok(ops) => {
-                            // Successfully parsed a complete definition or sequence
-                            pending_tokens.clear();
-                            if let Err(e) = eval(&ops, &mut stack, &mut dictionary) {
-                                eprintln!("Error: {}", e);
-                            }
-                        }
-                        Err(e) => {
-                            // If still inside definition or conditional, wait for more lines
-                            if matches!(
-                                e,
-                                crate::parser::ParseError::UnterminatedDefinition
-                                    | crate::parser::ParseError::UnterminatedConditional
-                            ) {
-                                continue;
-                            }
-                            // Otherwise report and clear buffer
-                            eprintln!("Parse Error: {:?}", e);
-                            pending_tokens.clear();
-                        }
-                    }
+                    // Add line to history before processing
+                    let _ = rl.add_history_entry(line.as_str());
+                    process_line(&line, &mut pending_tokens, &mut stack, &mut dictionary);
                 }
                 Err(ReadlineError::Interrupted) => {
                     println!("CTRL-C");
@@ -107,42 +120,43 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     } else {
         // Piped input
         let stdin = io::stdin();
-        let mut pending_tokens = Vec::new();
         for line in stdin.lock().lines() {
             match line {
                 Ok(l) => {
-                    // Lex this line
-                    let line_tokens: Vec<Token> = Token::lexer(&l).filter_map(|r| r.ok()).collect();
-                    pending_tokens.extend(line_tokens);
-                    if pending_tokens.is_empty() {
-                        continue;
-                    }
-                    // Try parsing buffered tokens
-                    match parse(pending_tokens.clone()) {
-                        Ok(ops) => {
-                            pending_tokens.clear();
-                            if let Err(e) = eval(&ops, &mut stack, &mut dictionary) {
-                                eprintln!("Error: {}", e);
-                            }
-                        }
-                        Err(e) => {
-                            if matches!(
-                                e,
-                                crate::parser::ParseError::UnterminatedDefinition
-                                    | crate::parser::ParseError::UnterminatedConditional
-                            ) {
-                                continue;
-                            }
-                            eprintln!("Parse Error: {:?}", e);
-                            pending_tokens.clear();
-                        }
-                    }
+                    process_line(&l, &mut pending_tokens, &mut stack, &mut dictionary);
                 }
                 Err(e) => {
                     eprintln!("Error reading stdin: {}", e);
                     break;
                 }
             }
+        }
+        // After processing all lines from stdin, check if there's anything left in pending_tokens
+        // This might happen if the input ends mid-definition or conditional.
+        // We could choose to error, warn, or attempt final processing.
+        // For now, let's just clear it if it's an unterminated state, otherwise try one last parse/eval.
+        if !pending_tokens.is_empty() {
+            match parse(pending_tokens.clone()) {
+                Ok(ops) => {
+                    if let Err(e) = eval(&ops, &mut stack, &mut dictionary) {
+                        eprintln!("Error processing remaining input: {}", e);
+                    }
+                }
+                Err(e) => {
+                    if !matches!(
+                        e,
+                        crate::parser::ParseError::UnterminatedDefinition
+                            | crate::parser::ParseError::UnterminatedConditional
+                    ) {
+                        eprintln!("Parse Error processing remaining input: {:?}", e);
+                    } else {
+                        eprintln!(
+                            "Warning: Input ended with unterminated definition or conditional."
+                        );
+                    }
+                }
+            }
+            pending_tokens.clear(); // Clear buffer regardless
         }
     }
 
